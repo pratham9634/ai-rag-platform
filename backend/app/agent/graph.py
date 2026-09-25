@@ -12,6 +12,7 @@ Implements a cyclic self-correcting RAG workflow using LangGraph:
 
 import json
 import logging
+import time
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -24,6 +25,7 @@ from app.agent.prompts import (
     ROUTER_PROMPT,
 )
 from app.agent.state import AgentState
+from app.observability.tracer import get_tracer_run_config, metrics_tracker
 from app.services.llm import LLMService
 from app.services.retrieval import RetrievalService
 
@@ -312,5 +314,18 @@ class AgentWorkflow:
             "api_key_override": api_key_override,
         }
 
-        final_state: AgentState = await self.graph.ainvoke(initial_state)
+        run_config = get_tracer_run_config(
+            tenant_id=tenant_id,
+            run_name=f"agentic_rag_query_{tenant_id}",
+        )
+
+        start_time = time.time()
+        final_state: AgentState = await self.graph.ainvoke(initial_state, config=run_config)
+        elapsed_ms = (time.time() - start_time) * 1000.0
+
+        metrics_tracker.record_query(
+            tenant_id=tenant_id,
+            latency_ms=elapsed_ms,
+            is_error=bool(final_state.get("error")),
+        )
         return final_state

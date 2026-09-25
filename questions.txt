@@ -658,4 +658,79 @@ A:
    - Impact: API requests fail fast with sanitized RFC-7807 JSON errors.
    - Mitigation: Connection pooling pre-ping (`pool_pre_ping=True`) discards dead sockets. No partial states or broken chunks are written because chunk writes and document READY transitions are atomic.
 
+--------------------------------------------------------------------------------
+
+Q56 [OBSERVABILITY & DISTRIBUTED TRACING: LANGSMITH TRACING & OPENLLM METRICS]: How does distributed tracing work across LangGraph nodes, why are custom tags (tenant:XYZ) and metadata essential for multi-tenant observability, and how do we prevent secret/BYOK leaks in traces?
+A:
+1. Distributed Tracing in LangGraph:
+   - When LangSmith is enabled (`LANGCHAIN_TRACING_V2=true`), each state transition across LangGraph nodes (`router` -> `retriever` -> `grader` -> `rewriter` -> `generator`) produces a parent-child execution trace tree.
+   - Every node logs exact latency, token consumption, prompts sent, and raw outputs.
+2. Multi-Tenant Tagging & Metadata Isolation:
+   - In `get_tracer_run_config()`, execution options pass `tags=["tenant:" + tenant_id, "enterprise-rag"]` and `metadata={"tenant_id": tenant_id}` into `graph.ainvoke()`.
+   - In LangSmith or Datadog, operators can filter traces by `tag:tenant:org_acme` to analyze per-tenant latency distributions, error rates, and token quotas for cost accounting.
+3. Secret Scrubbing in Traces:
+   - OpenRouter BYOK API keys and Bearer tokens are passed ephemerally and scrubbed by `SensitiveDataFilter`.
+   - System prompts and run metadata strictly exclude raw API key strings, preventing credential leakage to third-party observability backends.
+
+--------------------------------------------------------------------------------
+
+Q57 [PRODUCTION CONTAINERIZATION: MULTI-STAGE DOCKER BUILDS & NON-ROOT SECURITY IN FASTAPI & NEXT.JS]: Why should production Docker containers use multi-stage builds and non-root system users, and how does the standalone Next.js build reduce container image size from 1GB to ~100MB?
+A:
+1. Multi-Stage Build Advantages:
+   - Stage 1 (Builder): Installs compilers (gcc), header files (python3-dev), and build dependencies (npm/pip) to compile C-extensions and frontend bundles.
+   - Stage 2 (Runner): Discards compiler toolchains, package managers, and caches, copying only the pre-compiled binary artifacts into a minimal runtime image (e.g. `python:3.11-slim` or `node:20-alpine`).
+2. Non-Root Security (Principle of Least Privilege):
+   - Running container processes as default `root` allows container escape vulnerabilities to compromise the host kernel.
+   - Production Dockerfiles create a dedicated unprivileged user (`appuser` with UID 10001, or `nextjs` with UID 1001) with `/sbin/nologin` shell, ensuring the container cannot write outside `/app` or elevate privileges.
+3. Next.js Standalone Optimization:
+   - By setting `output: "standalone"` in `next.config.ts`, Next.js analyzes module dependency trees and extracts only the exact JavaScript files necessary to serve the application into `.next/standalone`.
+   - Node_modules (~800MB) are discarded, shrinking image size to ~100MB, drastically accelerating CI/CD container pull times and autoscaling cold starts.
+
+--------------------------------------------------------------------------------
+
+Q58 [MICROSERVICES & ASYNCHRONOUS WORKER PROCESSES: STANDALONE WORKER CONTAINER ENTRYPOINTS]: Why should background workers run in separate containers or processes with dedicated command entrypoints (python -m app.workers.main) rather than sharing the API server's event loop in high-throughput deployments?
+A:
+1. Event Loop Isolation & Noisy Neighbor Prevention:
+   - In FastAPI, running heavy background tasks (`BackgroundTasks`) within the web container consumes CPU cycles and threads on the same ASGI event loop.
+   - High-volume document uploads would starve incoming conversational user queries of CPU time, spiking chat P99 latency.
+2. Independent Horizontal Autoscaling:
+   - The API Gateway is I/O-bound (handling HTTP requests, streaming SSE tokens, querying DB).
+   - Ingestion Workers are CPU-bound (PDF parsing, text cleaning, embedding vectorization).
+   - Separating them via `python -m app.workers.main` allows Kubernetes HPA or Docker Swarm to autoscale workers independently during batch ingestion spikes without over-provisioning web servers.
+3. Process Lifecycle & Graceful Draining:
+   - A dedicated worker process traps `SIGTERM` and `SIGINT` signals, allowing in-flight document ingestion jobs to complete and commit before shutting down, avoiding corrupted states.
+
+--------------------------------------------------------------------------------
+
+Q59 [CLIENT-SIDE REAL-TIME POLLING & ASYNC STATE SYNCHRONIZATION: ASYNCHRONOUS INGESTION TRACKING]: How does the frontend implement resilient, non-blocking polling (GET /api/documents/{id}/status) for background ingestion without spamming the backend or leaking memory across unmounted React components?
+A:
+1. Non-Blocking Status Polling Lifecycle:
+   - When the user uploads a document, the API responds immediately with `HTTP 202 Accepted` and `document_id`.
+   - The React component initializes a polling loop (`setInterval` every 1.5s) targeting `/api/documents/{id}/status`.
+   - It tracks lifecycle states: `PENDING` -> `PROCESSING` -> `READY` / `FAILED`.
+   - Once the terminal state (`READY` or `FAILED`) is detected, `clearInterval()` halts polling immediately.
+2. Bounded Retry & Backoff:
+   - The polling client enforces a hard cap (`maxAttempts = 30`, 45 seconds total). If processing takes longer, it gracefully resolves to a background status message without hanging the browser.
+3. Memory Leak Prevention:
+   - In React `useEffect()`, the interval cleanup function `return () => clearInterval(timer)` guarantees that navigating away from the Document Library unmounts the component and cancels all active network timers.
+4. Duplicate Upload Interception:
+   - If `result.is_duplicate === true`, polling is completely bypassed, and an amber alert notifies the user that the file is already indexed in their workspace.
+
+--------------------------------------------------------------------------------
+
+Q60 [SYSTEM PRODUCTION READINESS: ZERO-DOWNTIME DEPLOYMENT, DATABASE MIGRATIONS & HEALTH/METRICS MONITORING]: How are zero-downtime rolling deployments executed in a multi-tenant RAG platform with Supabase/PostgreSQL schema migrations, connection pool warmups, and /health/ready & /health/metrics monitoring?
+A:
+1. Decoupled Liveness vs. Readiness Probes:
+   - `/health`: Liveness probe. Returns immediate `200 OK` to confirm the container process has not deadlocked. If it fails, orchestrators restart the container.
+   - `/health/ready`: Readiness probe. Executes a lightweight query (`SELECT 1`) to verify that PostgreSQL connection pools and network interfaces are ready to accept traffic. Traffic is only routed to the container once readiness passes.
+2. Zero-Downtime Schema Migrations (Expand/Contract Pattern):
+   - Database schema changes (like adding `file_hash` and `expires_at` in Phase 8) are always backwards-compatible:
+     Step 1 (Expand): Add nullable columns and compound indexes without dropping or renaming existing columns.
+     Step 2 (Deploy): Roll out new backend code utilizing the new fields.
+     Step 3 (Contract): After 100% rollout, backfill data and apply constraints if required.
+3. Real-Time SLA Monitoring (`/health/metrics`):
+   - Exposes in-memory thread-safe operational metrics: uptime, total queries, error rates, and P50/P90/P99 latency percentiles.
+   - Cloud monitoring tools scrape this endpoint to trigger automated alerts when P99 exceeds SLA boundaries (e.g. > 5.0 seconds).
+
+
 

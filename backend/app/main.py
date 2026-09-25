@@ -27,6 +27,7 @@ from app.api.health import router as health_router
 from app.api.retrieval import router as retrieval_router
 from app.auth.sanitizer import install_log_sanitizer, sanitize_text
 from app.config import settings
+from app.observability.tracer import configure_langsmith_tracing
 from app.workers.cleanup_service import start_periodic_cleanup_loop
 
 # ── Logging & Secret Scrubbing ───────────────────────────────────────
@@ -49,6 +50,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     # ── Startup ──
     install_log_sanitizer()
+    configure_langsmith_tracing()
     logger.info(
         "Starting Enterprise RAG API | env=%s",
         settings.environment,

@@ -24,8 +24,10 @@ export default function DocumentManager({ tenantId, onDocumentsChange }: Documen
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [uploading, setUploading] = useState<boolean>(false);
+  const [uploadStatusText, setUploadStatusText] = useState<string>("Processing Document...");
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [isDuplicateNotice, setIsDuplicateNotice] = useState<boolean>(false);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -52,6 +54,20 @@ export default function DocumentManager({ tenantId, onDocumentsChange }: Documen
     fetchDocuments();
   }, [tenantId]);
 
+  // Periodic polling while any document is actively in PENDING or PROCESSING state
+  useEffect(() => {
+    const hasActiveProcessing = documents.some(
+      (d) => d.status === "PENDING" || d.status === "PROCESSING"
+    );
+    if (!hasActiveProcessing) return;
+
+    const timer = setInterval(() => {
+      fetchDocuments();
+    }, 2500);
+
+    return () => clearInterval(timer);
+  }, [documents, tenantId]);
+
   const handleFileUpload = async (file: File) => {
     if (!file) return;
 
@@ -67,7 +83,9 @@ export default function DocumentManager({ tenantId, onDocumentsChange }: Documen
 
     setUploadError(null);
     setUploadSuccess(null);
+    setIsDuplicateNotice(false);
     setUploading(true);
+    setUploadStatusText("Hashing payload & validating...");
 
     const formData = new FormData();
     formData.append("file", file);
@@ -87,13 +105,61 @@ export default function DocumentManager({ tenantId, onDocumentsChange }: Documen
       }
 
       const result = await res.json();
-      setUploadSuccess(`Successfully ingested "${result.filename}" (${result.total_chunks} chunks).`);
+
+      if (result.is_duplicate) {
+        setIsDuplicateNotice(true);
+        setUploadSuccess(`Identical file "${result.filename}" already exists in this workspace (idempotent duplicate skipped).`);
+        await fetchDocuments();
+        setUploading(false);
+        return;
+      }
+
+      // If asynchronous background processing scheduled (HTTP 202 Accepted)
+      const docId = result.document_id;
+      setUploadStatusText("Extracting structure, chunking & embedding...");
       await fetchDocuments();
+
+      let attempts = 0;
+      const maxAttempts = 30; // 30 * 1.5s = 45s
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        try {
+          const statusRes = await fetch(`${API_BASE}/api/documents/${docId}/status`, {
+            headers: { "X-Tenant-ID": tenantId },
+          });
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.status === "READY") {
+              clearInterval(pollInterval);
+              setUploadSuccess(`Successfully ingested "${statusData.filename}" (${statusData.total_chunks || 0} chunks).`);
+              setUploading(false);
+              await fetchDocuments();
+              return;
+            } else if (statusData.status === "FAILED") {
+              clearInterval(pollInterval);
+              setUploadError(`Ingestion failed: ${statusData.error_message || "Unknown error"}`);
+              setUploading(false);
+              await fetchDocuments();
+              return;
+            }
+          }
+        } catch {
+          // Keep polling
+        }
+
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          setUploadSuccess(`Document queued in background. Status will update automatically.`);
+          setUploading(false);
+          await fetchDocuments();
+        }
+      }, 1500);
+
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to upload document.";
       setUploadError(msg);
-    } finally {
       setUploading(false);
+    } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
@@ -168,7 +234,7 @@ export default function DocumentManager({ tenantId, onDocumentsChange }: Documen
         </div>
 
         <h3 className="text-sm font-semibold text-white">
-          {uploading ? "Parsing, Chunking & Embedding..." : "Upload PDF Knowledge Base"}
+          {uploading ? uploadStatusText : "Upload PDF Knowledge Base"}
         </h3>
         <p className="mt-1 text-xs text-gray-400 text-center max-w-sm">
           Drag & drop your corporate policies, guides, or manuals here, or click to browse (up to 10MB).
@@ -181,7 +247,7 @@ export default function DocumentManager({ tenantId, onDocumentsChange }: Documen
           onClick={() => fileInputRef.current?.click()}
           className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-indigo-600/30 transition-all hover:bg-indigo-500 hover:shadow-indigo-500/40 disabled:opacity-50"
         >
-          {uploading ? "Processing Document..." : "Select PDF Document"}
+          {uploading ? uploadStatusText : "Select PDF Document"}
         </button>
 
         {uploadError && (
@@ -192,8 +258,18 @@ export default function DocumentManager({ tenantId, onDocumentsChange }: Documen
         )}
 
         {uploadSuccess && (
-          <div className="mt-3.5 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-400">
-            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+          <div
+            className={`mt-3.5 flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs ${
+              isDuplicateNotice
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+            }`}
+          >
+            {isDuplicateNotice ? (
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            )}
             <span>{uploadSuccess}</span>
           </div>
         )}
