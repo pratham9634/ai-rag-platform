@@ -11,8 +11,8 @@ Why Pydantic Settings?
 - Fails fast if required config is missing
 """
 
-from pydantic_settings import BaseSettings
 from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):

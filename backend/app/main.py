@@ -13,14 +13,14 @@ Architecture:
 """
 
 import logging
-from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
 from app.api.health import router as health_router
+from app.config import settings
 
 # ── Logging ──────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -74,9 +74,7 @@ app = FastAPI(
 #
 # Security: We restrict to specific origins — no wildcard (*) in production.
 cors_origins = [
-    origin.strip()
-    for origin in settings.backend_cors_origins.split(",")
-    if origin.strip()
+    origin.strip() for origin in settings.backend_cors_origins.split(",") if origin.strip()
 ]
 
 app.add_middleware(
