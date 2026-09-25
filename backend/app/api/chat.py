@@ -328,14 +328,25 @@ async def chat_stream(
     - `data: {"type": "token", "content": "..."}`
     - `data: {"type": "done", "conversation_id": "..."}`
     """
+
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
             # 1. Immediate initial feedback to client
-            yield f"data: {json.dumps({'type': 'status', 'stage': 'routing', 'message': 'Analyzing query intent & routing...'})}\n\n"
+            status_init = {
+                "type": "status",
+                "stage": "routing",
+                "message": "Analyzing query intent & routing...",
+            }
+            yield f"data: {json.dumps(status_init)}\n\n"
             await asyncio.sleep(0.04)
 
             # 2. Status update for retrieval
-            yield f"data: {json.dumps({'type': 'status', 'stage': 'retrieving', 'message': 'Searching knowledge base with hybrid vectors & keywords...'})}\n\n"
+            status_retrieval = {
+                "type": "status",
+                "stage": "retrieving",
+                "message": "Searching knowledge base with hybrid vectors & keywords...",
+            }
+            yield f"data: {json.dumps(status_retrieval)}\n\n"
 
             # 3. Execute LangGraph agentic workflow
             workflow = AgentWorkflow(db=db)
@@ -350,7 +361,12 @@ async def chat_stream(
             route = final_state.get("route", "retrieve")
 
             # 4. Status update for generation
-            yield f"data: {json.dumps({'type': 'status', 'stage': 'generating', 'message': 'Synthesizing grounded answer with citations...'})}\n\n"
+            status_gen = {
+                "type": "status",
+                "stage": "generating",
+                "message": "Synthesizing grounded answer with citations...",
+            }
+            yield f"data: {json.dumps(status_gen)}\n\n"
             await asyncio.sleep(0.04)
 
             # 5. Resolve or create persistent conversation
