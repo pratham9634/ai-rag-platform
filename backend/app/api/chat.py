@@ -6,7 +6,7 @@ and Server-Sent Events (SSE) token streaming with citation grounding.
 Enforces multi-tenant data isolation on all operations.
 """
 
-import contextlib
+import asyncio
 import json
 import logging
 import uuid
@@ -328,41 +328,109 @@ async def chat_stream(
     - `data: {"type": "token", "content": "..."}`
     - `data: {"type": "done", "conversation_id": "..."}`
     """
-    workflow = AgentWorkflow(db=db)
-
-    # First execute the workflow up to generation
-    final_state = await workflow.run(
-        tenant_id=tenant_id,
-        query=payload.query,
-        api_key_override=x_openrouter_api_key,
-    )
-
-    answer = final_state.get("generation", "")
-    citations = final_state.get("citations", [])
-    route = final_state.get("route", "retrieve")
-
-    # Resolve or create conversation
-    conv_id = uuid.uuid4()
-    if payload.conversation_id:
-        with contextlib.suppress(ValueError):
-            conv_id = uuid.UUID(payload.conversation_id)
-
     async def event_generator() -> AsyncGenerator[str, None]:
-        # 1. Send route metadata
-        yield f"data: {json.dumps({'type': 'route', 'route': route})}\n\n"
+        try:
+            # 1. Immediate initial feedback to client
+            yield f"data: {json.dumps({'type': 'status', 'stage': 'routing', 'message': 'Analyzing query intent & routing...'})}\n\n"
+            await asyncio.sleep(0.04)
 
-        # 2. Send citations if available
-        if citations:
-            yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
+            # 2. Status update for retrieval
+            yield f"data: {json.dumps({'type': 'status', 'stage': 'retrieving', 'message': 'Searching knowledge base with hybrid vectors & keywords...'})}\n\n"
 
-        # 3. Stream generation tokens word by word
-        words = answer.split(" ")
-        for i, word in enumerate(words):
-            token = word if i == len(words) - 1 else word + " "
-            yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+            # 3. Execute LangGraph agentic workflow
+            workflow = AgentWorkflow(db=db)
+            final_state = await workflow.run(
+                tenant_id=tenant_id,
+                query=payload.query,
+                api_key_override=x_openrouter_api_key,
+            )
 
-        # 4. Send completion event
-        yield f"data: {json.dumps({'type': 'done', 'conversation_id': str(conv_id)})}\n\n"
+            answer = final_state.get("generation", "")
+            citations = final_state.get("citations", [])
+            route = final_state.get("route", "retrieve")
+
+            # 4. Status update for generation
+            yield f"data: {json.dumps({'type': 'status', 'stage': 'generating', 'message': 'Synthesizing grounded answer with citations...'})}\n\n"
+            await asyncio.sleep(0.04)
+
+            # 5. Resolve or create persistent conversation
+            conv_id: uuid.UUID
+            is_new_conv = True
+            if payload.conversation_id:
+                try:
+                    conv_id = uuid.UUID(payload.conversation_id)
+                    conv_check = await db.execute(
+                        select(Conversation).where(
+                            Conversation.id == conv_id,
+                            Conversation.tenant_id == tenant_id,
+                        )
+                    )
+                    if conv_check.scalar_one_or_none():
+                        is_new_conv = False
+                    else:
+                        conv_id = uuid.uuid4()
+                except ValueError:
+                    conv_id = uuid.uuid4()
+            else:
+                conv_id = uuid.uuid4()
+
+            now = datetime.now(UTC)
+            if is_new_conv:
+                new_conv = Conversation(
+                    id=conv_id,
+                    tenant_id=tenant_id,
+                    title=payload.query[:60] + ("..." if len(payload.query) > 60 else ""),
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(new_conv)
+            else:
+                conv_obj = await db.get(Conversation, conv_id)
+                if conv_obj:
+                    conv_obj.updated_at = now
+
+            # Save user message
+            user_msg = Message(
+                id=uuid.uuid4(),
+                conversation_id=conv_id,
+                tenant_id=tenant_id,
+                role="user",
+                content=payload.query,
+                created_at=now,
+            )
+            db.add(user_msg)
+
+            # Save assistant message with citations
+            assistant_msg = Message(
+                id=uuid.uuid4(),
+                conversation_id=conv_id,
+                tenant_id=tenant_id,
+                role="assistant",
+                content=answer,
+                citations=citations,
+                created_at=now,
+            )
+            db.add(assistant_msg)
+            await db.flush()
+
+            # 6. Send route and citations metadata
+            yield f"data: {json.dumps({'type': 'route', 'route': route})}\n\n"
+            if citations:
+                yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
+
+            # 7. Stream generation tokens word by word with human-like micro-pacing
+            words = answer.split(" ")
+            for i, word in enumerate(words):
+                token = word if i == len(words) - 1 else word + " "
+                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+                await asyncio.sleep(0.02)
+
+            # 8. Send completion event
+            yield f"data: {json.dumps({'type': 'done', 'conversation_id': str(conv_id)})}\n\n"
+
+        except Exception as err:
+            logger.error(f"Error in chat_stream event_generator: {err}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(err)})}\n\n"
 
     return StreamingResponse(
         event_generator(),

@@ -12,6 +12,8 @@ import {
   ChevronRight,
   ShieldCheck,
   RefreshCw,
+  Brain,
+  CheckCircle2,
 } from "lucide-react";
 
 interface Citation {
@@ -55,6 +57,8 @@ export default function ChatInterface({ tenantId }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputQuery, setInputQuery] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [thinkingStep, setThinkingStep] = useState<string | null>(null);
+  const [thinkingHistory, setThinkingHistory] = useState<string[]>([]);
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -65,7 +69,7 @@ export default function ChatInterface({ tenantId }: ChatInterfaceProps) {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isStreaming]);
+  }, [messages, isStreaming, thinkingStep]);
 
   // Fetch tenant conversations
   const fetchConversations = async () => {
@@ -116,6 +120,8 @@ export default function ChatInterface({ tenantId }: ChatInterfaceProps) {
     setActiveConvId(null);
     setMessages([]);
     setInputQuery("");
+    setThinkingStep(null);
+    setThinkingHistory([]);
   };
 
   const handleSendMessage = async (queryText?: string) => {
@@ -124,6 +130,8 @@ export default function ChatInterface({ tenantId }: ChatInterfaceProps) {
 
     setInputQuery("");
     setIsStreaming(true);
+    setThinkingStep("Analyzing query intent & routing...");
+    setThinkingHistory(["Analyzing query intent & routing..."]);
 
     // 1. Add user message optimistically
     const userMsg: Message = {
@@ -181,7 +189,13 @@ export default function ChatInterface({ tenantId }: ChatInterfaceProps) {
           try {
             const event = JSON.parse(jsonStr);
 
-            if (event.type === "token") {
+            if (event.type === "status") {
+              setThinkingStep(event.message);
+              setThinkingHistory((prev) =>
+                prev.includes(event.message) ? prev : [...prev, event.message]
+              );
+            } else if (event.type === "token") {
+              setThinkingStep(null);
               accumulatedContent += event.content;
               setMessages((prev) =>
                 prev.map((msg) =>
@@ -200,10 +214,20 @@ export default function ChatInterface({ tenantId }: ChatInterfaceProps) {
                 )
               );
             } else if (event.type === "done") {
+              setThinkingStep(null);
               if (event.conversation_id && !activeConvId) {
                 setActiveConvId(event.conversation_id);
                 fetchConversations();
               }
+            } else if (event.type === "error") {
+              setThinkingStep(null);
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMsgId
+                    ? { ...msg, content: `Error: ${event.message || "Failed to generate answer."}` }
+                    : msg
+                )
+              );
             }
           } catch {
             // Ignore parse errors for split chunk frames
@@ -212,6 +236,7 @@ export default function ChatInterface({ tenantId }: ChatInterfaceProps) {
       }
     } catch (err) {
       console.error("Streaming error:", err);
+      setThinkingStep(null);
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === assistantMsgId
@@ -221,6 +246,7 @@ export default function ChatInterface({ tenantId }: ChatInterfaceProps) {
       );
     } finally {
       setIsStreaming(false);
+      setThinkingStep(null);
     }
   };
 
@@ -324,7 +350,39 @@ export default function ChatInterface({ tenantId }: ChatInterfaceProps) {
                         : "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
                     }`}
                   >
-                    <p className="whitespace-pre-wrap">{m.content}</p>
+                    {isAssistant && m.content === "" && isStreaming ? (
+                      <div className="space-y-2 py-1">
+                        <div className="flex items-center gap-2 text-indigo-400 font-mono text-[11px]">
+                          <Brain className="h-4 w-4 animate-spin text-indigo-400" />
+                          <span className="font-semibold tracking-wide">
+                            {thinkingStep || "Thinking & Routing..."}
+                          </span>
+                          <span className="flex h-1.5 w-1.5 rounded-full bg-indigo-400 animate-ping ml-auto" />
+                        </div>
+                        {thinkingHistory.length > 0 && (
+                          <div className="mt-1.5 pl-5 space-y-1 text-[11px] text-gray-400 border-l border-indigo-500/20">
+                            {thinkingHistory.map((step, idx) => (
+                              <div key={idx} className="flex items-center gap-1.5">
+                                <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
+                                <span>{step}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex gap-1.5 pt-1">
+                          <div className="h-1.5 w-12 rounded bg-indigo-500/30 animate-pulse" />
+                          <div className="h-1.5 w-20 rounded bg-indigo-500/20 animate-pulse" />
+                          <div className="h-1.5 w-10 rounded bg-indigo-500/10 animate-pulse" />
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="whitespace-pre-wrap">
+                        {m.content}
+                        {isStreaming && isAssistant && m.id === messages[messages.length - 1]?.id && (
+                          <span className="inline-block w-1.5 h-3.5 ml-1 bg-indigo-400 animate-pulse rounded-sm align-middle" />
+                        )}
+                      </p>
+                    )}
 
                     {/* Citations Footer */}
                     {isAssistant && m.citations && m.citations.length > 0 && (
