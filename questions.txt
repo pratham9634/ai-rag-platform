@@ -125,4 +125,67 @@ A:
 - Thread Starvation: Under concurrent traffic (e.g., 20 users uploading files simultaneously), synchronous blocking consumes all Uvicorn worker threads, rendering the API completely unresponsive even for lightweight health check or chat requests.
 - Fault Tolerance: Asynchronous background processing allows retries with exponential backoff if an embedding API fails, without forcing the user to re-upload the file.
 
+--------------------------------------------------------------------------------
 
+Q20: Why is Hybrid Search (Dense Vector + Sparse Lexical) superior to vector search alone in enterprise RAG?
+A:
+1. Dense Vector Retrieval (pgvector) matches conceptual and semantic meaning. It excels at answering conceptual queries ("What are our vacation policies?" matches "PTO guidelines"), but struggles with exact strings, part numbers, code identifiers, acronyms, or proper names.
+2. Sparse Lexical Search (PostgreSQL FTS / BM25) matches exact keyword tokens and frequencies. It excels at precise terminology, product IDs, and legal citations ("Clause 4.2.1"), but fails when users use synonyms.
+3. Hybrid Search executes both retrieval strategies in parallel, ensuring that whether a user searches by exact keyword or conceptual paraphrase, relevant chunks are discovered in candidate recall.
+
+--------------------------------------------------------------------------------
+
+Q21: What is Reciprocal Rank Fusion (RRF) and why is it preferred over score normalization?
+A:
+1. The Problem: Dense search outputs cosine similarities (0.0 to 1.0) while lexical search outputs BM25 / ts_rank scores (unbounded 0 to infinity). Directly adding or normalizing these scores is fragile because score distributions vary wildly depending on query length and vocabulary.
+2. The Solution: RRF is a rank-based fusion algorithm: RRF(d) = SUM( 1 / (k + rank_i(d)) ), where k is a smoothing constant (typically 60).
+3. Why it works: RRF relies purely on relative position (rank) within each retriever rather than raw scores. Chunks ranked near the top of both dense and sparse lists receive a substantial score boost, making RRF parameter-free, robust, and universally applicable across heterogeneous search backends.
+
+--------------------------------------------------------------------------------
+
+Q22: Bi-Encoder vs Cross-Encoder — what is the difference and why combine both in a two-stage retrieval pipeline?
+A:
+1. Bi-Encoder (Dense Retrieval): Query and chunks are encoded separately into fixed-size vector embeddings. Comparison is a simple dot product / cosine similarity. Advantage: Chunks can be pre-computed and indexed (e.g. HNSW); query search takes milliseconds over millions of chunks. Disadvantage: Cannot model token-level interactions between query and document.
+2. Cross-Encoder (Reranker): Query and chunk are concatenated and fed simultaneously into the transformer model: [CLS] Query [SEP] Chunk [SEP]. Full cross-attention allows every query word to attend to every chunk word. Advantage: Vastly higher accuracy and relevance scoring. Disadvantage: Computationally expensive; cannot be pre-indexed.
+3. Two-Stage Production Architecture: Bi-encoder retrieves a broad candidate pool of top-20 chunks in 5ms. Cross-encoder reranker then deeply scores those 20 candidates in 20ms to extract the top-5 highest quality chunks for the LLM prompt. This delivers the speed of vector search with the precision of deep attention.
+
+--------------------------------------------------------------------------------
+
+Q23 [SCENARIO]: When running FastAPI in a monorepo or submodule, the application throws `500 Internal Server Error` with `RuntimeError: DATABASE_URL is not configured` when hitting database-dependent endpoints, even though `.env` exists in the repository root. How do you diagnose and fix this structurally?
+A:
+1. Diagnosis:
+   - By default, Pydantic `BaseSettings` looks for `env_file=".env"` relative to the current working directory (`os.getcwd()`).
+   - If a developer or process starts the server from `backend/` (`python -m uvicorn app.main:app`), `os.getcwd()` is `<repo_root>/backend`.
+   - If `.env` is stored at the project repository root `<repo_root>/.env`, Pydantic fails to discover it, silently defaulting all environment variables to empty strings (`settings.database_url = ""`).
+   - When endpoints invoke dependency `Depends(get_db)`, the async engine is uninitialized (`engine = None`), throwing a 500 error.
+2. Structural Solution:
+   - Dynamically compute candidate `.env` paths relative to the configuration file's own location:
+     ```python
+     _BACKEND_DIR = Path(__file__).resolve().parent.parent
+     _ROOT_DIR = _BACKEND_DIR.parent
+     _CANDIDATE_ENVS = [_BACKEND_DIR / ".env", _ROOT_DIR / ".env", Path(".env")]
+     _ENV_FILES = [str(p) for p in _CANDIDATE_ENVS if p.is_file()]
+     ```
+   - Configure `model_config = SettingsConfigDict(env_file=_ENV_FILES or ".env", extra="ignore")`.
+   - This ensures environment variables are loaded accurately whether commands run from project root, `backend/`, Docker containers, or CI runners.
+
+--------------------------------------------------------------------------------
+
+Q24 [SCENARIO]: How should database connections and transactions be managed in an asynchronous FastAPI application (SQLAlchemy + asyncpg) to guarantee tenant isolation, leak-free connection pooling, and atomic rollbacks on failure?
+A:
+1. Connection Pooling (`create_async_engine`):
+   - Configure `pool_size=10` and `max_overflow=20` to prevent worker thread starvation.
+   - Enable `pool_pre_ping=True` so dropped TCP sockets or cloud database idle disconnections (e.g. Supabase connection reapers) are automatically detected and refreshed before queries execute.
+2. Request-Scoped Session Dependency (`get_db`):
+   - Use an asynchronous generator yielding `AsyncSession` with `expire_on_commit=False` and `autocommit=False`.
+   - Wrap the session in a `try...except...finally` block:
+     ```python
+     async with async_session_factory() as session:
+         try:
+             yield session
+             await session.commit()
+         except Exception:
+             await session.rollback()
+             raise
+     ```
+   - On unhandled exception during document ingestion, `session.rollback()` guarantees incomplete chunks or corrupted records are purged atomically, leaving zero orphan data in the database.

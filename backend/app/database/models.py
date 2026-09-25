@@ -7,7 +7,9 @@ Every data entity contains a tenant_id to guarantee data isolation.
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     DateTime,
     ForeignKey,
@@ -16,7 +18,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -145,6 +147,16 @@ class DocumentChunk(Base):
         nullable=False,
         doc="Number of BPE tokens in this chunk",
     )
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(1536),
+        nullable=True,
+        doc="1536-dimensional dense embedding vector for semantic search",
+    )
+    tsv: Mapped[Any | None] = mapped_column(
+        TSVECTOR,
+        nullable=True,
+        doc="PostgreSQL tsvector for sparse lexical full-text search",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -159,4 +171,12 @@ class DocumentChunk(Base):
     __table_args__ = (
         Index("ix_chunks_tenant_doc", "tenant_id", "document_id"),
         Index("ix_chunks_tenant_page", "tenant_id", "page_number"),
+        Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
+        Index(
+            "ix_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
