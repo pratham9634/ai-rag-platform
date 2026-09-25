@@ -1,0 +1,63 @@
+================================================================================
+ENTERPRISE AGENTIC RAG PLATFORM — INTERVIEW PREPARATION (DAY 1)
+================================================================================
+
+Q1: What is an embedding?
+A: An embedding is a high-dimensional, dense numerical vector (e.g., 384, 768, or 1536 floating-point values) that captures the semantic meaning of text. Texts with similar meanings are mapped to vectors that are close to each other in vector space. In our platform, we convert document chunks and user queries into vector embeddings to perform semantic similarity matching.
+
+--------------------------------------------------------------------------------
+
+Q2: Why use a vector database (like pgvector) instead of keyword search alone?
+A: Traditional keyword search (like BM25 or SQL LIKE) relies on exact lexical matches or word stems. If a document discusses "vacation policy" and a user searches "time off", keyword search fails to find a match. Vector search matches semantic concepts regardless of exact terminology. We use pgvector within PostgreSQL because it combines dense vector similarity search with standard SQL filtering in a single ACID-compliant database.
+
+--------------------------------------------------------------------------------
+
+Q3: What is RAG and why is it needed?
+A: RAG (Retrieval-Augmented Generation) combines an external knowledge retrieval system with a generative Large Language Model. LLMs alone suffer from knowledge cutoffs, inability to access private or dynamic enterprise data, and hallucinations. RAG retrieves relevant document chunks from private storage at query time and injects them into the LLM prompt as context, grounding the answer and enabling direct source citations.
+
+--------------------------------------------------------------------------------
+
+Q4: Why does chunking matter in a RAG pipeline?
+A: Large documents cannot be fed into an LLM all at once due to context window limits and token costs. Furthermore, injecting huge blocks of text dilutes retrieval relevance ("lost in the middle" problem). Chunking splits documents into smaller, semantically coherent segments (e.g., 500 tokens with 10% overlap). The chunk size represents a tradeoff: chunks that are too small lack surrounding context, while chunks that are too large introduce irrelevant noise and increase latency.
+
+--------------------------------------------------------------------------------
+
+Q5: What is cosine similarity and why is it preferred for embeddings?
+A: Cosine similarity measures the cosine of the angle between two non-zero vectors: cos(θ) = (A · B) / (||A|| ||B||). It ranges from -1 to 1 (or 0 to 1 for normalized vectors). Unlike Euclidean distance, which measures the straight-line distance between coordinate points and is sensitive to vector magnitude (text length), cosine similarity evaluates directional alignment, making it invariant to vector scale.
+
+--------------------------------------------------------------------------------
+
+Q6: What is the difference between Authentication and Authorization?
+A: 
+- Authentication (AuthN): Answers "Who are you?" It proves identity using credentials, tokens, or SSO (handled in our system by Clerk).
+- Authorization (AuthZ): Answers "What are you permitted to do?" It verifies permissions and roles (e.g., Owner, Admin, Member, Viewer) based on the authenticated identity (enforced in our system by FastAPI backend middleware).
+
+--------------------------------------------------------------------------------
+
+Q7: Why separate Clerk (Auth) from Supabase (Database)?
+A: Decoupling auth from data storage enforces clean separation of concerns and reduces attack surface. Relying on database-level auth (like Supabase Auth combined with Row Level Security) risks data leakage if an RLS policy has a bug or is inadvertently bypassed. By using Clerk for identity, our FastAPI backend acts as an explicit gatekeeper that extracts and validates the JWT, derives the tenant context server-side, and enforces strict query constraints before hitting the database.
+
+--------------------------------------------------------------------------------
+
+Q8: What is multi-tenancy and why must it be designed from Day 1?
+A: Multi-tenancy is an architectural model where a single software instance serves multiple distinct customer organizations (tenants), with strict logical separation so no tenant can ever view or modify another tenant's data. Retrofitting multi-tenancy onto a single-tenant codebase is notoriously difficult and risky because every table, query, and cache key must be altered; missing a single filter creates an immediate data leak vulnerability. By including tenant_id across all tables from Day 1, isolation is tested and guaranteed by default.
+
+--------------------------------------------------------------------------------
+
+Q9: What is tool calling in LLM agents?
+A: Tool calling (or function calling) enables an LLM to interact with external tools, APIs, and databases. The application provides the LLM with structured function definitions (JSON schema). When the LLM decides that answering a query requires external action, it emits a structured function call with arguments rather than natural language text. The application executes the function and feeds the output back to the LLM to complete its reasoning loop.
+
+--------------------------------------------------------------------------------
+
+Q10: What is a context window and how do you manage it?
+A: The context window is the maximum number of tokens an LLM can consume in a single prompt-response cycle. If the conversation history, system prompt, and retrieved documents exceed this limit, the model will error or drop context. We manage this through: (1) selective hybrid retrieval with top-k reranking to inject only the most relevant chunks, (2) sliding-window or summarized conversation histories, and (3) prompt compaction techniques.
+
+--------------------------------------------------------------------------------
+
+Q11: What happens if Redis goes down in your architecture?
+A: Redis is used strictly for non-durable and ephemeral workloads: background job queues, rate-limiting counters, and short-term caching. All persistent state (user data, document metadata, vectors, chat history) is stored in PostgreSQL. If Redis experiences downtime, the system experiences degraded performance (rate limiting fails open or throttles, background ingestion pauses), but no persistent enterprise data is lost.
+
+--------------------------------------------------------------------------------
+
+Q12: Why BYOK (Bring Your Own Key) and what are its security requirements?
+A: BYOK allows users or enterprise customers to supply their own LLM API keys (e.g., OpenRouter or OpenAI). This eliminates LLM operational costs for the platform provider and gives users complete control over their model choices, spending caps, and data privacy policies. Security requirements: BYOK keys must be encrypted at rest (AES-256-GCM), used strictly in-memory during request execution, and scrubbed from all logging, traces, and third-party observability platforms.

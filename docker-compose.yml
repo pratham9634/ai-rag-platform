@@ -1,0 +1,105 @@
+# ============================================
+# Enterprise RAG Platform — Docker Compose
+# ============================================
+# Development environment with hot-reload.
+#
+# Services:
+#   frontend  → Next.js (port 3000)
+#   backend   → FastAPI (port 8000)
+#   redis     → Redis   (port 6379)
+#   worker    → Background worker (same image as backend)
+#
+# Managed services (NOT in Docker):
+#   Supabase  → PostgreSQL + pgvector + Storage (cloud)
+#   Clerk     → Authentication (cloud)
+#   OpenRouter → LLM API (cloud, user BYOK)
+#   LangSmith → Observability (cloud)
+
+version: "3.8"
+
+services:
+  # ── Frontend ────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      - NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+      - NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+      - NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/dashboard
+      - NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/dashboard
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # Prevent host node_modules from overriding
+      - /app/.next          # Prevent host .next from overriding
+    depends_on:
+      - backend
+
+  # ── Backend ─────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - BACKEND_CORS_ORIGINS=http://localhost:3000
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - SUPABASE_STORAGE_BUCKET=documents
+      - REDIS_URL=redis://redis:6379/0
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-enterprise-rag}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+
+  # ── Redis ───────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    # Health check so other services wait for Redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Background Worker ───────────────────────────
+  # Same codebase as backend, different entrypoint.
+  # Processes async jobs (document ingestion, cleanup, etc.)
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -m app.workers.main
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - SUPABASE_STORAGE_BUCKET=documents
+      - REDIS_URL=redis://redis:6379/0
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+
+volumes:
+  redis_data:

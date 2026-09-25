@@ -1,0 +1,49 @@
+[project]
+name = "enterprise-rag-backend"
+version = "0.1.0"
+description = "Enterprise RAG Platform — FastAPI Backend"
+requires-python = ">=3.11"
+
+# ── Ruff (Linter + Formatter) ───────────────────────────────────────
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import ordering)
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "S",    # flake8-bandit (security)
+    "T20",  # flake8-print (catch accidental prints)
+    "SIM",  # flake8-simplify
+    "RUF",  # Ruff-specific rules
+]
+ignore = [
+    "S101",  # Allow assert in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]  # Allow assert in test files
+
+# ── MyPy (Type Checker) ─────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["redis.*", "uvicorn.*"]
+ignore_missing_imports = true
+
+# ── Pytest ───────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
