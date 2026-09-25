@@ -89,6 +89,18 @@ app.add_middleware(
 
 
 # ── Routers ──────────────────────────────────────────────────────────
+@app.get("/", tags=["root"])
+async def root() -> dict[str, str]:
+    """Root welcome endpoint providing service status and documentation links."""
+    return {
+        "service": "Enterprise RAG Platform API",
+        "version": "0.1.0",
+        "status": "online",
+        "docs_url": "/docs",
+        "health_url": "/health",
+    }
+
+
 app.include_router(health_router)
 app.include_router(documents_router)
 app.include_router(retrieval_router)

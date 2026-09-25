@@ -19,13 +19,14 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.models import Document, DocumentChunk
 from app.database.session import get_db
 from app.services.chunker import SemanticChunker
+from app.services.embeddings import EmbeddingService
 from app.services.parser import InvalidPDFError, PDFEncryptedError, PDFParser
 
 logger = logging.getLogger(__name__)
@@ -150,7 +151,19 @@ async def upload_document(
     pages_input = [(p.page_number, p.text) for p in parsed_doc.pages]
     chunks = chunker.chunk_document(pages_input)
 
-    # 5. Persist to database in atomic transaction
+    # 5. Generate embeddings for all chunks in batch
+    embedding_service = EmbeddingService()
+    chunk_texts = [c.content for c in chunks]
+    try:
+        embeddings = await embedding_service.generate_embeddings_batch(chunk_texts)
+    except Exception as e:
+        logger.warning(
+            "Batch embedding generation failed: %s. Continuing with empty embeddings.",
+            str(e),
+        )
+        embeddings = []
+
+    # 6. Persist to database in atomic transaction
     doc_id = uuid.uuid4()
     storage_path = f"{tenant_id}/{doc_id}.pdf"
 
@@ -164,7 +177,8 @@ async def upload_document(
     )
     db.add(document)
 
-    for c in chunks:
+    for idx, c in enumerate(chunks):
+        emb = embeddings[idx] if idx < len(embeddings) else None
         db_chunk = DocumentChunk(
             document_id=doc_id,
             tenant_id=tenant_id,
@@ -172,6 +186,8 @@ async def upload_document(
             page_number=c.page_number,
             content=c.content,
             token_count=c.token_count,
+            embedding=emb,
+            tsv=func.to_tsvector("english", c.content),
         )
         db.add(db_chunk)
 

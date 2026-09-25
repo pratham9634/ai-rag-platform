@@ -28,7 +28,7 @@ async def test_embedding_dimension_and_normalization() -> None:
 @pytest.mark.asyncio
 async def test_deterministic_reproducibility() -> None:
     """Identical input texts must produce identical fallback embedding vectors."""
-    service = EmbeddingService()
+    service = EmbeddingService(api_key="sk-dummy")
     text = "Enterprise RAG multi-tenant architecture."
 
     v1 = await service.generate_embedding(text)
