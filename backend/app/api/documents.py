@@ -13,7 +13,6 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
-    Header,
     HTTPException,
     UploadFile,
     status,
@@ -23,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.auth.security import get_current_tenant_id, require_role
 from app.database.models import Document, DocumentChunk
 from app.database.session import get_db
 from app.services.chunker import SemanticChunker
@@ -60,24 +60,6 @@ class DocumentUploadResponse(BaseModel):
     total_pages: int
     total_chunks: int
     message: str
-
-
-# ── Tenant Resolution Helper ─────────────────────────────────────────
-def get_current_tenant_id(
-    x_tenant_id: Annotated[
-        str | None,
-        Header(description="Tenant identifier (Derived from JWT in production)"),
-    ] = None,
-) -> str:
-    """
-    Extract active tenant_id.
-
-    In Day 2-4, accepts the X-Tenant-ID header (fallback 'default-tenant').
-    In Day 5, this will be replaced with verified Clerk JWT claims.
-    """
-    if not x_tenant_id or not x_tenant_id.strip():
-        return "default-tenant"
-    return x_tenant_id.strip()
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
@@ -286,3 +268,38 @@ async def get_document(
         total_chunks=len(doc.chunks),
         error_message=doc.error_message,
     )
+
+
+@router.delete(
+    "/{document_id}",
+    summary="Delete document and remove all vector chunks (Admin only)",
+)
+async def delete_document(
+    document_id: uuid.UUID,
+    tenant_id: Annotated[str, Depends(get_current_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _admin: Annotated[Any, Depends(require_role(["admin", "org:admin"]))],
+) -> dict[str, str]:
+    """
+    Delete a document and cascade remove all its chunk vectors.
+
+    Strict multi-tenant isolation: WHERE id = :id AND tenant_id = :tenant_id.
+    Enforces Role-Based Access Control (RBAC): Only Admin role permitted.
+    """
+    query = select(Document).where(
+        Document.id == document_id,
+        Document.tenant_id == tenant_id,
+    )
+    result = await db.execute(query)
+    doc = result.scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    await db.delete(doc)
+    await db.flush()
+
+    return {"message": "Document and all chunks deleted successfully."}

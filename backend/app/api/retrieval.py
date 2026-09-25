@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.documents import get_current_tenant_id
+from app.auth.security import get_current_tenant_id
 from app.database.session import get_db
 from app.services.retrieval import RetrievalService
 

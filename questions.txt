@@ -227,3 +227,60 @@ A:
 2. SSE vs WebSockets:
    - Unidirectional Nature: Generative AI streaming is strictly one-way (server to client) once the initial prompt is submitted. SSE provides this over standard HTTP without the overhead of WebSocket handshakes, stateful ping-pong keep-alives, or proxy/firewall traversal issues.
    - Native Browser Support: Browsers provide native EventSource with automatic reconnection and seamless integration with HTTP headers (such as Authorization: Bearer <JWT> and X-Tenant-ID).
+
+--------------------------------------------------------------------------------
+
+Q28 [AUTHENTICATION & MULTI-TENANCY]: How does server-side Clerk JWT verification and dynamic tenant derivation (`org_id` vs `user_id` personal workspace fallback) prevent tenant spoofing in FastAPI?
+A:
+1. The Vulnerability of Client-Supplied Tenant Headers:
+   - If an API simply trusts an `X-Tenant-ID` header supplied by the browser, any malicious actor can inject another organization's UUID and read or delete proprietary company documents.
+2. Cryptographic JWT Verification:
+   - FastAPI intercepts the incoming `Authorization: Bearer <token>` header.
+   - The token's signature, expiration (`exp`), and issuer (`iss`) are cryptographically verified against Clerk's public JWKS or the shared PEM secret.
+3. Server-Side Tenant Derivation:
+   - Claims extraction inspects `org_id` inside the decoded JWT payload.
+   - B2B Organization Mode: If the user is operating within a Clerk Organization, `org_id` (e.g. `org_2XYZ...`) is extracted as the authoritative `tenant_id`.
+   - B2C Personal Workspace Fallback: If no organization is active, the system derives `user_{user_id}` as their personal isolated tenant partition.
+   - The verified `tenant_id` is injected into the request state and passed directly to SQLAlchemy database queries. Any untrusted client-supplied header is rejected or strictly cross-checked against the token's authenticated organization ID.
+
+--------------------------------------------------------------------------------
+
+Q29 [SECURITY & AUTHORIZATION]: How is Role-Based Access Control (RBAC) enforced hierarchically (Admin vs Member vs Viewer) on destructive operations like document deletion, and why must tenant checks precede role checks?
+A:
+1. Multi-Tier Role Hierarchy:
+   - `admin` / `org:admin`: Full administrative control (document ingestion, document deletion, tenant configuration, member management).
+   - `member` / `org:member`: Read and write access (upload documents, execute conversational queries, view citations).
+   - `viewer`: Read-only access (ask questions against existing documents, view citations, cannot upload or delete).
+2. FastAPI Dependency Enforcement:
+   - Destructive endpoints (e.g. `DELETE /api/documents/{document_id}`) enforce role checks via dependency injection:
+     ```python
+     @router.delete("/{document_id}")
+     async def delete_doc(
+         document_id: str,
+         user: dict = Depends(require_role(["admin", "org:admin"])),
+         tenant_id: str = Depends(get_current_tenant_id),
+     ):
+         ...
+     ```
+   - If the user's decoded token role is not in the allowed roles list, FastAPI immediately returns `HTTP 403 Forbidden`.
+3. Precedence of Tenant Isolation over Role Authority:
+   - An "admin" role is strictly scoped to that user's tenant partition.
+   - Database queries MUST enforce `WHERE id = :document_id AND tenant_id = :tenant_id`.
+   - Even if a user possesses the `admin` role, they cannot delete or access resources belonging to a foreign tenant. Tenant boundaries are invariant and supersede administrative roles.
+
+--------------------------------------------------------------------------------
+
+Q30 [FRONTEND & STREAMING ARCHITECTURE]: How does the Next.js 15 App Router handle real-time SSE token streaming and interactive citation highlighting without blocking the UI thread or triggering memory leaks?
+A:
+1. Native `ReadableStream` & `TextDecoder`:
+   - The Next.js client initiates a `fetch` request to `/api/chat/stream` with `POST` payload.
+   - Instead of waiting for full payload resolution, it reads `response.body.getReader()`.
+   - An asynchronous `while (true)` loop decodes incoming Uint8Array byte chunks using `TextDecoder` and splits SSE payloads on `\n\n` boundaries.
+2. Progressive State Updates:
+   - As each `data: {"type": "token", "content": "..."}` frame arrives, the assistant message in local React state is updated progressively, rendering characters immediately with smooth micro-animations.
+3. Citation De-duplication and Grounding:
+   - When the server finishes inference, it emits `data: {"type": "citations", "citations": [...]}` containing page numbers, chunk IDs, and snippet previews.
+   - Interactive citation chips (e.g. `📄 Page 3`) are rendered alongside the response. Clicking a citation opens a modal highlighting the exact context snippet, providing transparent evidence for every generated claim.
+4. Memory Leak Prevention:
+   - Cleanup handlers close the `reader.cancel()` if the user navigates away or starts a new thread, preventing dangling async network listeners in the browser.
+

@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent.graph import AgentWorkflow
-from app.api.documents import get_current_tenant_id
+from app.auth.security import get_current_tenant_id
 from app.database.models import Conversation, Message
 from app.database.session import get_db
 
