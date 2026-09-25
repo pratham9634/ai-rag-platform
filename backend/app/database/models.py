@@ -18,7 +18,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import TSVECTOR, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -179,4 +179,113 @@ class DocumentChunk(Base):
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+    )
+
+
+class Conversation(Base):
+    """
+    Multi-tenant chat conversation thread.
+
+    Groups multi-turn messages and preserves context under a specific tenant.
+    """
+
+    __tablename__ = "conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+        doc="Organization ID derived server-side from JWT claims",
+    )
+    title: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="New Conversation",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    messages: Mapped[list["Message"]] = relationship(
+        "Message",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="Message.created_at",
+    )
+
+    __table_args__ = (Index("ix_conversations_tenant_updated", "tenant_id", "updated_at"),)
+
+
+class Message(Base):
+    """
+    A single turn within a multi-tenant conversation thread.
+
+    Stores role (user/assistant), message text, and grounded citations list.
+    """
+
+    __tablename__ = "messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+        doc="Denormalized tenant_id for high-speed tenant-filtered message queries",
+    )
+    role: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        doc="Message sender role: user, assistant, system",
+    )
+    content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        doc="Grounding citations list: doc_id, filename, page_number, chunk_id",
+    )
+    token_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    conversation: Mapped["Conversation"] = relationship(
+        "Conversation",
+        back_populates="messages",
+    )
+
+    __table_args__ = (
+        Index("ix_messages_tenant_conv", "tenant_id", "conversation_id"),
+        Index("ix_messages_tenant_created", "tenant_id", "created_at"),
     )

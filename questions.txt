@@ -189,3 +189,41 @@ A:
              raise
      ```
    - On unhandled exception during document ingestion, `session.rollback()` guarantees incomplete chunks or corrupted records are purged atomically, leaving zero orphan data in the database.
+
+
+--------------------------------------------------------------------------------
+
+Q25 [DECISION & SCENARIO]: Why use a cyclic Agentic RAG workflow (LangGraph StateGraph) with query rewriting and relevance grading instead of a simple linear RAG pipeline?
+A:
+1. Limitations of Linear RAG:
+   - A traditional linear pipeline (Query -> Retrieve -> Prompt -> Generate) fails catastrophically when the user query is vague, acronym-heavy, or misaligned with document phrasing.
+   - If initial retrieval returns irrelevant chunks, the generator either hallucinates or refuses to answer, with zero opportunity for correction.
+2. The Agentic StateGraph Advantage:
+   - Routing: Classifies conversational chit-chat vs document-dependent queries before hitting vector storage.
+   - Self-Correction Loop: The Relevance Grader evaluates retrieved chunks. If the similarity score or semantic context is deficient, the graph routes to the Query Rewriter node to reformulate the search query and re-execute hybrid retrieval.
+   - Bounded Recursion: Enforces MAX_RETRIES (e.g. 1) to prevent infinite retrieval loops and control API latency.
+
+--------------------------------------------------------------------------------
+
+Q26 [SCENARIO]: How do you prevent LLM hallucinations and enforce strict citation grounding in production enterprise RAG systems?
+A:
+1. Strict Context-Constrained System Prompts:
+   - Explicitly instruct the model to answer exclusively from the provided context blocks and to reply "I do not have enough information in the uploaded documents to answer this question" rather than guessing.
+2. Explicit Citation Syntax:
+   - Force the LLM to tag facts with source page markers (e.g. [Page 1]).
+3. Hallucination Grader Node:
+   - An automated grading step checks the candidate generation against the retrieved document chunks before outputting to the user.
+4. Structured Citation Metadata:
+   - The backend attaches structured citation metadata (chunk_id, document_id, page_number, relevance_score) to the API response alongside the generated text, enabling frontend PDF viewers to highlight exact bounding boxes and verified pages.
+
+--------------------------------------------------------------------------------
+
+Q27 [ARCHITECTURE]: How does Server-Sent Events (SSE) streaming with token-level citations work in FastAPI without blocking async workers, and why prefer SSE over WebSockets for chat generation?
+A:
+1. Mechanism:
+   - Uses StreamingResponse with media_type="text/event-stream".
+   - An asynchronous generator yields structured events formatted as data: {"type": "token", "content": "..."}\n\n.
+   - Because generation runs within Python's async event loop (asyncio), the Uvicorn worker thread is never blocked waiting for downstream network packets or LLM token delays.
+2. SSE vs WebSockets:
+   - Unidirectional Nature: Generative AI streaming is strictly one-way (server to client) once the initial prompt is submitted. SSE provides this over standard HTTP without the overhead of WebSocket handshakes, stateful ping-pong keep-alives, or proxy/firewall traversal issues.
+   - Native Browser Support: Browsers provide native EventSource with automatic reconnection and seamless integration with HTTP headers (such as Authorization: Bearer <JWT> and X-Tenant-ID).
