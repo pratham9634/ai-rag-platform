@@ -13,7 +13,7 @@ Why Pydantic Settings?
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Candidate paths to locate .env whether running from project root or backend folder
@@ -74,15 +74,45 @@ class Settings(BaseSettings):
     # ---------- LangSmith ----------
     langchain_tracing_v2: bool = Field(
         default=False,
+        validation_alias=AliasChoices(
+            "LANGCHAIN_TRACING_V2",
+            "langchain_tracing_v2",
+            "LANGSMITH_TRACING_V2",
+            "langsmith_tracing_v2",
+            "LANGSMITH_TRACING",
+            "langsmith_tracing",
+        ),
         description="Enable LangSmith tracing",
     )
     langchain_api_key: str = Field(
         default="",
+        validation_alias=AliasChoices(
+            "LANGCHAIN_API_KEY",
+            "langchain_api_key",
+            "LANGSMITH_API_KEY",
+            "langsmith_api_key",
+        ),
         description="LangSmith API key",
     )
     langchain_project: str = Field(
         default="enterprise-rag",
+        validation_alias=AliasChoices(
+            "LANGCHAIN_PROJECT",
+            "langchain_project",
+            "LANGSMITH_PROJECT",
+            "langsmith_project",
+        ),
         description="LangSmith project name",
+    )
+    langsmith_endpoint: str = Field(
+        default="https://api.smith.langchain.com",
+        validation_alias=AliasChoices(
+            "LANGSMITH_ENDPOINT",
+            "langsmith_endpoint",
+            "LANGCHAIN_ENDPOINT",
+            "langchain_endpoint",
+        ),
+        description="LangSmith endpoint URL",
     )
 
     model_config = SettingsConfigDict(

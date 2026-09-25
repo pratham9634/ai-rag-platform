@@ -33,6 +33,12 @@ def configure_langsmith_tracing() -> bool:
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
         os.environ["LANGCHAIN_API_KEY"] = settings.langchain_api_key
         os.environ["LANGCHAIN_PROJECT"] = settings.langchain_project or "enterprise-rag"
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = settings.langchain_api_key
+        endpoint = getattr(settings, "langsmith_endpoint", "")
+        if endpoint and isinstance(endpoint, str):
+            os.environ["LANGCHAIN_ENDPOINT"] = endpoint
+            os.environ["LANGSMITH_ENDPOINT"] = endpoint
         logger.info(
             "LangSmith distributed tracing enabled (Project: %s).",
             settings.langchain_project,
