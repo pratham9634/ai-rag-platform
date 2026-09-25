@@ -129,3 +129,28 @@ The Enterprise Agentic RAG Platform is a multi-tenant, security-hardened, produc
 ### Why Redis for Queues over PostgreSQL Polling?
 - Polling PostgreSQL tables at high frequency introduces unnecessary read lock contention and disk I/O.
 - Redis provides sub-millisecond in-memory queueing, atomic counters for rate limiting, and pub/sub capabilities.
+
+---
+
+## 6. Branching Strategy & CI/CD Pipeline
+
+### 6.1 GitHub Flow Branching Model
+- **`main`**: Production-ready, always-deployable code. Protected by required PR reviews and status checks.
+- **`develop`**: Primary integration branch for daily development cycles.
+- **`feature/*` / `day-*`**: Short-lived feature branches cut from `develop` and merged via Pull Request after CI passes.
+
+### 6.2 Automated Continuous Integration (CI)
+GitHub Actions triggers on all pushes and PRs to `main` and `develop`:
+1. **Backend CI (`backend-ci`)**:
+   - Python 3.11 environment.
+   - Ruff linting and formatting verification (`ruff check`, `ruff format --check`).
+   - MyPy strict static type checking (`mypy app`).
+   - Pytest automated test execution (`pytest -v tests/`).
+2. **Frontend CI (`frontend-ci`)**:
+   - Node 20 runtime.
+   - ESLint static analysis (`npm run lint`).
+   - TypeScript compile check (`tsc --noEmit`).
+   - Next.js production build validation (`npm run build`).
+3. **Security Guard (`security-scan`)**:
+   - Automated git tree audit ensuring no `.env` or certificate files are tracked.
+

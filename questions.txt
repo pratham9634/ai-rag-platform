@@ -61,3 +61,18 @@ A: Redis is used strictly for non-durable and ephemeral workloads: background jo
 
 Q12: Why BYOK (Bring Your Own Key) and what are its security requirements?
 A: BYOK allows users or enterprise customers to supply their own LLM API keys (e.g., OpenRouter or OpenAI). This eliminates LLM operational costs for the platform provider and gives users complete control over their model choices, spending caps, and data privacy policies. Security requirements: BYOK keys must be encrypted at rest (AES-256-GCM), used strictly in-memory during request execution, and scrubbed from all logging, traces, and third-party observability platforms.
+
+--------------------------------------------------------------------------------
+
+Q13: What is Shift-Left testing and why implement CI early in this project?
+A: Shift-Left testing moves validation (linting, static typing, unit testing, and build verification) earlier into the software development life cycle. Rather than waiting for a pre-release or deployment phase, every developer push is automatically tested. In our platform, setting up GitHub Actions CI from Day 1 guarantees that every subsequent change (RAG ingestion, vector search, agent loops, auth) is automatically tested against type contracts and unit tests, preventing regressions before PRs can merge.
+
+--------------------------------------------------------------------------------
+
+Q14: How do you secure a CI/CD pipeline against secret leakage?
+A: 
+1. Never store production or developer credentials directly in workflow files or git repositories.
+2. Use minimal workflow permissions (`contents: read`).
+3. For automated unit tests that require environment configurations, provide mock or synthetic environment variables inside the CI runner rather than real API keys.
+4. Implement automated secret detection steps (like `git ls-files` audits or tools like Trufflehog/GitGuardian) to fail the build immediately if someone accidentally commits a `.env` or credentials file.
+
