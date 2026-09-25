@@ -85,3 +85,6 @@ $RECYCLE.BIN/
 *.orig
 *.pdf
 skills/
+decision.md
+decision*.md
+

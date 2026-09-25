@@ -241,7 +241,15 @@ class AgentWorkflow:
 
         context_blocks = []
         for d in documents:
-            context_blocks.append(f"[Page {d['page_number']}]: {d['content']}")
+            clean_content = (
+                str(d["content"])
+                .replace("</untrusted_document_context>", "&lt;/untrusted_document_context&gt;")
+                .replace("<untrusted_document_context>", "&lt;untrusted_document_context&gt;")
+                .replace("<system>", "&lt;system&gt;")
+                .replace("</system>", "&lt;/system&gt;")
+            )
+            chunk_header = f'<chunk page="{d["page_number"]}" chunk_id="{d.get("chunk_id", "")}">'
+            context_blocks.append(f"{chunk_header}\n{clean_content}\n</chunk>")
         formatted_context = "\n\n".join(context_blocks)
 
         system_msg = GENERATOR_SYSTEM_PROMPT.format(context=formatted_context)

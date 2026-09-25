@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.ratelimit import RateLimiter
 from app.auth.security import get_current_tenant_id, require_role
 from app.database.models import Document, DocumentChunk
 from app.database.session import get_db
@@ -68,6 +69,7 @@ class DocumentUploadResponse(BaseModel):
     response_model=DocumentUploadResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Upload and ingest a PDF document",
+    dependencies=[Depends(RateLimiter(requests_per_minute=20, scope="upload"))],
 )
 async def upload_document(
     file: Annotated[UploadFile, File(description="PDF document (max 10MB)")],

@@ -16,20 +16,23 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.retrieval import router as retrieval_router
+from app.auth.sanitizer import install_log_sanitizer, sanitize_text
 from app.config import settings
 
-# ── Logging ──────────────────────────────────────────────────────────
+# ── Logging & Secret Scrubbing ───────────────────────────────────────
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
+install_log_sanitizer()
 logger = logging.getLogger(__name__)
 
 
@@ -39,14 +42,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Application lifecycle manager.
 
-    Startup: Initialize connections (Redis, DB, etc.)
+    Startup: Initialize connections (Redis, DB, etc.) and security filters.
     Shutdown: Clean up connections gracefully.
-
-    Using lifespan instead of deprecated @app.on_event("startup")
-    because lifespan is the modern FastAPI pattern that properly
-    manages async resources and ensures cleanup on shutdown.
     """
     # ── Startup ──
+    install_log_sanitizer()
     logger.info(
         "Starting Enterprise RAG API | env=%s",
         settings.environment,
@@ -67,6 +67,34 @@ app = FastAPI(
     docs_url="/docs" if settings.environment != "production" else None,
     redoc_url="/redoc" if settings.environment != "production" else None,
 )
+
+
+# ── Safe Error Handlers (Security Hardening) ──────────────────────────
+@app.exception_handler(HTTPException)
+async def sanitized_http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """Sanitize any potential keys or sensitive strings in HTTP errors."""
+    sanitized_detail = sanitize_text(str(exc.detail)) if isinstance(exc.detail, str) else exc.detail
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": sanitized_detail},
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Catch-all unhandled exception handler.
+    Prevents leakage of internal stack traces, DB connection strings, or system paths.
+    """
+    logger.error("Unhandled server exception: %s", sanitize_text(str(exc)), exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "An internal server error occurred. Please contact support.",
+            "code": "INTERNAL_SERVER_ERROR",
+        },
+    )
 
 
 # ── CORS Middleware ──────────────────────────────────────────────────

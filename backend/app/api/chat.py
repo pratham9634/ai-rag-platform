@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent.graph import AgentWorkflow
+from app.api.ratelimit import RateLimiter
 from app.auth.security import get_current_tenant_id
 from app.database.models import Conversation, Message
 from app.database.session import get_db
@@ -205,6 +206,7 @@ async def get_conversation_messages(
     "/query",
     response_model=ChatQueryResponse,
     summary="Execute agentic RAG query (synchronous)",
+    dependencies=[Depends(RateLimiter(requests_per_minute=30, scope="chat"))],
 )
 async def chat_query(
     payload: ChatQueryRequest,
@@ -309,6 +311,7 @@ async def chat_query(
 @router.post(
     "/stream",
     summary="Stream agentic RAG response tokens via Server-Sent Events (SSE)",
+    dependencies=[Depends(RateLimiter(requests_per_minute=30, scope="chat"))],
 )
 async def chat_stream(
     payload: ChatQueryRequest,
