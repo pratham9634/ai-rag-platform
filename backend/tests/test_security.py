@@ -121,7 +121,7 @@ def test_sensitive_data_scrubber_masks_bearer_tokens() -> None:
 def test_logging_filter_scrubs_records() -> None:
     """SensitiveDataFilter must scrub log record messages and arguments."""
     sanitizer = SensitiveDataFilter()
-    secret_key = "sk-or-v1-" + ("dummytoken" * 5)  # noqa: S105
+    secret_key = "sk-or-v1-" + ("dummytoken" * 5)
     record = logging.LogRecord(
         name="test",
         level=logging.ERROR,
