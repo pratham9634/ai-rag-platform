@@ -1,0 +1,44 @@
+[project]
+name = "enterprise-agentic-rag-platform"
+version = "0.1.0"
+description = "Enterprise Agentic RAG Platform"
+requires-python = ">=3.11"
+
+# ── Ruff Configuration ────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".next",
+    "backend/venv",
+    ".venv",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import ordering)
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "S",    # flake8-bandit (security)
+    "T20",  # flake8-print (catch accidental prints)
+    "SIM",  # flake8-simplify
+    "RUF",  # Ruff-specific rules
+]
+ignore = [
+    "S101",  # Allow assert in tests
+    "B008",  # Allow Depends/File in FastAPI parameter defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/**/*.py" = ["S101"]
+"tests/**/*.py" = ["S101"]
+"evaluation/**/*.py" = ["E402", "T201", "E501"]  # Allow sys.path bootstrap, CLI prints, and markdown report strings
+
+
