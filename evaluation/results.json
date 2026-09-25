@@ -1,0 +1,247 @@
+{
+  "run_id": "eval_1790361642",
+  "timestamp": "2026-09-25T18:40:42.781211Z",
+  "total_questions": 3,
+  "categories": {
+    "easy": 3
+  },
+  "retrieval_comparison": {
+    "dense_vector": {
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0
+    },
+    "hybrid_rrf": {
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0
+    },
+    "hybrid_reranked": {
+      "recall@3": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0
+    }
+  },
+  "generation_summary": {
+    "faithfulness": 0.91,
+    "answer_relevance": 0.72,
+    "citation_accuracy": 1.0,
+    "unanswerable_rejection_rate": 1.0,
+    "adversarial_defense_rate": 1.0
+  },
+  "latency_summary": {
+    "p50_ms": 24566.64,
+    "p90_ms": 27489.2,
+    "p99_ms": 27489.2,
+    "mean_ms": 23542.85
+  },
+  "details": [
+    {
+      "item": {
+        "id": "q01",
+        "category": "easy",
+        "query": "What is the duration of the introductory probationary period for new full-time hires?",
+        "expected_pages": [
+          1
+        ],
+        "expected_keywords": [
+          "90-day",
+          "probationary",
+          "introductory period"
+        ],
+        "reference_answer": "All new full-time hires are subject to an initial 90-day probationary introductory period commencing on their start date.",
+        "is_unanswerable": false,
+        "is_adversarial": false
+      },
+      "dense_retrieval": {
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "retrieved_pages": [
+          1,
+          10,
+          3,
+          2,
+          4
+        ]
+      },
+      "hybrid_retrieval": {
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "retrieved_pages": [
+          1,
+          10,
+          3,
+          2,
+          4
+        ]
+      },
+      "reranked_retrieval": {
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "retrieved_pages": [
+          1,
+          3,
+          10,
+          2,
+          8
+        ]
+      },
+      "generation": {
+        "faithfulness": 0.73,
+        "answer_relevance": 0.49,
+        "citation_accuracy": 1.0,
+        "cited_pages": [
+          1
+        ],
+        "admitted_ignorance": false,
+        "attack_neutralized": true,
+        "explanation": "Deterministic evaluation: 1/3 keywords matched."
+      },
+      "response_text": "The duration of the introductory probationary period for new full-time hires is 90 days, commencing on their formal start date [Page 1].",
+      "total_latency_ms": 27489.2
+    },
+    {
+      "item": {
+        "id": "q02",
+        "category": "easy",
+        "query": "What is the maximum reimbursement amount for the one-time home office setup stipend?",
+        "expected_pages": [
+          2
+        ],
+        "expected_keywords": [
+          "$750",
+          "home office",
+          "stipend"
+        ],
+        "reference_answer": "Full-time remote employees are entitled to a one-time, non-taxable home office setup stipend of up to $750 for ergonomic chairs, desks, monitors, or headsets, claimable within 60 days of hire.",
+        "is_unanswerable": false,
+        "is_adversarial": false
+      },
+      "dense_retrieval": {
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "retrieved_pages": [
+          2,
+          8,
+          4,
+          3,
+          1
+        ]
+      },
+      "hybrid_retrieval": {
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "retrieved_pages": [
+          2,
+          8,
+          4,
+          3,
+          1
+        ]
+      },
+      "reranked_retrieval": {
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "retrieved_pages": [
+          2,
+          3,
+          10,
+          8,
+          1
+        ]
+      },
+      "generation": {
+        "faithfulness": 1.0,
+        "answer_relevance": 0.67,
+        "citation_accuracy": 1.0,
+        "cited_pages": [
+          2
+        ],
+        "admitted_ignorance": false,
+        "attack_neutralized": true,
+        "explanation": "Deterministic evaluation: 3/3 keywords matched."
+      },
+      "response_text": "The maximum reimbursement amount for the one-time home office setup stipend is up to $750 [Page 2].",
+      "total_latency_ms": 24566.64
+    },
+    {
+      "item": {
+        "id": "q03",
+        "category": "easy",
+        "query": "How many days of annual paid time off (PTO) do regular full-time employees receive?",
+        "expected_pages": [
+          3
+        ],
+        "expected_keywords": [
+          "25 days",
+          "paid time off",
+          "PTO",
+          "2.08 days"
+        ],
+        "reference_answer": "Regular full-time employees receive 25 days of accrued paid time off (PTO) per calendar year, accruing at 2.08 days per full month worked.",
+        "is_unanswerable": false,
+        "is_adversarial": false
+      },
+      "dense_retrieval": {
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "retrieved_pages": [
+          3,
+          1,
+          4,
+          2,
+          10
+        ]
+      },
+      "hybrid_retrieval": {
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "retrieved_pages": [
+          3,
+          1,
+          4,
+          2,
+          10
+        ]
+      },
+      "reranked_retrieval": {
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "retrieved_pages": [
+          3,
+          1,
+          2,
+          10,
+          9
+        ]
+      },
+      "generation": {
+        "faithfulness": 1.0,
+        "answer_relevance": 1.0,
+        "citation_accuracy": 1.0,
+        "cited_pages": [
+          3
+        ],
+        "admitted_ignorance": false,
+        "attack_neutralized": true,
+        "explanation": "Deterministic evaluation: 4/4 keywords matched."
+      },
+      "response_text": "Regular full-time employees receive 25 days of accrued paid time off (PTO) per calendar year, accruing at a rate of 2.08 days per full month worked [Page 3].",
+      "total_latency_ms": 18572.72
+    }
+  ],
+  "metadata": {
+    "document": "acme_employee_handbook.pdf",
+    "pages": 10,
+    "tenant": "eval-tenant"
+  }
+}
