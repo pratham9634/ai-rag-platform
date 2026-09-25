@@ -53,6 +53,12 @@ class Settings(BaseSettings):
         description="Redis connection URL",
     )
 
+    # ---------- OpenRouter ----------
+    openrouter_api_key: str = Field(
+        default="",
+        description="OpenRouter API key for LLM and embeddings",
+    )
+
     # ---------- LangSmith ----------
     langchain_tracing_v2: bool = Field(
         default=False,
