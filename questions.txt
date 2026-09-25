@@ -505,5 +505,83 @@ A:
      `{"detail": "An internal server error occurred. Please contact support.", "code": "INTERNAL_SERVER_ERROR"}` with `HTTP 500`.
    - Strips all internal stack traces, DB connection strings, and credential values from responses.
 
+--------------------------------------------------------------------------------
 
+Q46 [EVALUATION & BENCHMARKING: THE RAG TRIAD]: What is the RAG Triad, why are traditional NLP metrics like BLEU/ROUGE insufficient for generative RAG, and how is each dimension mathematically formulated?
+A:
+1. Shortcomings of BLEU & ROUGE:
+   - BLEU and ROUGE evaluate strictly n-gram lexical overlap between model generation and a reference text.
+   - An LLM answer can be 100% factually accurate, beautifully structured, and fully grounded, but use distinct synonyms or sentence structures, resulting in near-zero BLEU/ROUGE scores.
+   - Conversely, an answer repeating keywords while hallucinating the core numbers or negations can score high ROUGE.
+2. The Three Dimensions of the RAG Triad:
+   - Context Relevance: Are the retrieved document chunks relevant to the user query?
+     Formula: |Relevant Retrieved Chunks| / |Total Retrieved Chunks|.
+   - Groundedness / Faithfulness: Can every factual claim in the response be directly inferred from the retrieved document context?
+     Formula: |Supported Claims in Response| / |Total Claims in Response|.
+   - Answer Relevance: Does the generated response directly answer the user's specific query without extraneous or evasive content?
+     Formula: Semantic alignment between Query embedding and Response embedding (or LLM judge scoring on a 0.0-1.0 scale).
+3. Production Target:
+   - Enterprise production systems should maintain >= 85% Faithfulness and >= 85% Answer Relevance.
+
+--------------------------------------------------------------------------------
+
+Q47 [RETRIEVAL BENCHMARKING: RECALL@K VS. MEAN RECIPROCAL RANK (MRR)]: How do Recall@K and MRR differ in evaluating dense vs. hybrid vs. reranked retrieval pipelines, and why can Recall@5 be 1.0 while MRR is only 0.2?
+A:
+1. Recall@K Formulation:
+   - Measures what fraction of ground-truth relevant pages/chunks are captured anywhere within the top-K retrieved results:
+     Recall@K = |Retrieved[:K] ∩ Expected| / |Expected|.
+   - Recall treats all ranks 1 through K equally: a relevant chunk at rank 1 produces the exact same Recall@5 score as a relevant chunk at rank 5.
+2. Mean Reciprocal Rank (MRR) Formulation:
+   - Measures where the FIRST relevant chunk appears in the ranked candidate list:
+     MRR = 1 / rank of first relevant chunk.
+   - If the first relevant chunk is at rank 1, MRR = 1.0 (1/1).
+   - If at rank 2, MRR = 0.5 (1/2).
+   - If at rank 5, MRR = 0.2 (1/5).
+   - If no relevant chunk is found in the retrieved list, MRR = 0.0.
+3. The Discrepancy (Recall@5 = 1.0 vs. MRR = 0.2):
+   - When a dense bi-encoder retrieves the correct chunk at rank 5, Recall@5 is 1.0 (it found the evidence), but MRR is only 0.2 because 4 irrelevant chunks were ranked above it.
+   - Why Cross-Encoder Reranking Matters: A cross-encoder model evaluates joint query-chunk attention, elevating that rank-5 chunk to rank-1, lifting MRR from 0.2 to 1.0 while keeping Recall@5 at 1.0. This prevents LLM prompt dilution and distraction.
+
+--------------------------------------------------------------------------------
+
+Q48 [EVALUATION METHODOLOGY: CONTROLLED GOLDEN DATASETS VS. SYNTHETIC QUESTION GENERATION]: Why should production enterprise RAG evaluation rely on a curated golden dataset rather than 100+ synthetically generated LLM questions?
+A:
+1. Flaws of Purely Synthetic Questions:
+   - Self-Testing / Tautology: If the same LLM family generates both the test questions from chunks and the answers, the model is tested only on its own linguistic biases and sentence phrasing, hiding blind spots.
+   - Missing Multi-Hop & Negative Edge Cases: Synthetic pipelines rarely create realistic multi-hop questions requiring synthesis across distant non-consecutive pages, nor do they generate malicious prompt injections or unanswerable queries.
+2. The Curated Golden Benchmark Dataset:
+   - Balanced Category Distribution: Hand-crafted test cases covering Easy (single-fact lookup), Medium (conceptual summaries), Difficult (numerical figures & escalation policies), Multi-Hop (cross-page synthesis), Unanswerable (testing hallucination refusal), and Adversarial (injection attacks).
+   - Authoritative Page Ground Truth: Each question maps to explicit ground-truth PDF page numbers (expected_pages: [1, 6]), allowing deterministic, objective verification of retrieval accuracy regardless of chunking parameters.
+3. The 80/20 Rule:
+   - A rigorous 30-question golden dataset with deterministic ground truth provides far higher diagnostic power and faster regression CI/CD cycles than 100 noisy synthetic questions.
+
+--------------------------------------------------------------------------------
+
+Q49 [LLM-AS-A-JUDGE: PITFALLS, DETERMINISTIC FALLBACKS & BIAS REDUCTION]: What are the primary failure modes of LLM-as-a-judge (position bias, verbosity bias, self-enhancement bias), and how does our platform mitigate them?
+A:
+1. LLM Judge Biases:
+   - Verbosity Bias: Models tend to score longer, wordier responses higher than concise, direct answers even if both contain identical facts.
+   - Self-Enhancement Bias: Models often favor outputs generated by their own model family or training architecture.
+   - Formatting Flakiness: LLMs instructed to output JSON frequently wrap responses in markdown, omit quotes, or add conversational preamble, breaking JSON parsers.
+2. Platform Mitigations:
+   - Deterministic Fallback: When the LLM judge fails or is offline, the evaluator falls back to deterministic lexical keyword coverage, exact citation extraction, and token overlap formulas.
+   - Strict Output Sanitization: Strips markdown backticks, extracts JSON envelopes with regex, and validates parsed fields using Pydantic schemas.
+   - Zero Temperature: Judge calls use temperature=0.0 to ensure deterministic, reproducible scoring across identical inputs.
+   - Ground-Truth Anchoring: Prompt provides the authoritative reference answer and retrieved context alongside the assistant response, bounding the judge's scoring criteria.
+
+--------------------------------------------------------------------------------
+
+Q50 [PERFORMANCE & TAIL LATENCY: P50/P90/P99 LATENCY PROFILING IN AGENTIC WORKFLOWS]: Why is average latency deceptive in multi-hop agentic RAG, and how do query-rewriting loops impact tail latency distributions?
+A:
+1. Deceptive Averages:
+   - If 9 requests execute single-hop retrieval and direct generation in 2.0 seconds, but 1 request triggers a query rewrite and takes 22.0 seconds, the average latency is 4.0 seconds.
+   - The average conceals that 10% of enterprise users suffer a 22-second wait time (an unacceptable user experience).
+2. Percentile Metrics:
+   - P50 (Median): Typical user experience for simple queries (e.g. ~2.0s).
+   - P90: Upper bound for 90% of requests, capturing queries with heavier document contexts or cross-encoder reranking.
+   - P99 (Tail Latency): Worst-case execution path, capturing queries where the agent routes through:
+     Initial Retrieval -> Relevance Grader (FAIL) -> Query Rewriter LLM Call -> Second Hybrid Retrieval -> Final Generation LLM Call -> Hallucination Check.
+3. Architectural Mitigations:
+   - Bounded Recursion: Enforce MAX_RETRIES = 1 so queries never loop indefinitely.
+   - Early Streaming TTFB: Yield initial SSE status events immediately so the user sees real-time progress during multi-hop rewrites.
 
