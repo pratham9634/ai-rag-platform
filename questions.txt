@@ -585,3 +585,77 @@ A:
    - Bounded Recursion: Enforce MAX_RETRIES = 1 so queries never loop indefinitely.
    - Early Streaming TTFB: Yield initial SSE status events immediately so the user sees real-time progress during multi-hop rewrites.
 
+--------------------------------------------------------------------------------
+
+Q51 [PRODUCTION WORKERS: ASYNCHRONOUS INGESTION ARCHITECTURES & HTTP TIMEOUT MITIGATION]: Why should large document ingestion never run synchronously in an HTTP request handler, and how does our background worker state machine decouple client latency?
+A:
+1. HTTP Gateway Timeouts & Event Loop Starvation:
+   - Synchronous processing of a 20-page PDF involves PDF text extraction, semantic chunking, and batch embedding calls to upstream LLM providers (e.g. OpenAI/OpenRouter), taking 10 to 30 seconds.
+   - Standard reverse proxies and load balancers enforce strict timeouts (Cloudflare: 100s, AWS ALB: 60s, Nginx: 30s). A long-running synchronous upload terminates with HTTP 504 Gateway Timeout.
+   - Furthermore, running CPU-heavy PyMuPDF parsing inside the ASGI async event loop blocks other concurrent user requests.
+2. The Asynchronous Worker State Machine:
+   - Ingestion follows a state machine: PENDING -> PROCESSING -> READY (or FAILED).
+   - Upon upload (`POST /api/documents/upload`), the server validates magic bytes (%PDF-), verifies size, computes the SHA-256 hash, creates a database record with status="PENDING", schedules the worker in the background, and returns `HTTP 202 Accepted` within milliseconds.
+   - The background worker executes parsing, chunking, and batch embeddings outside the active HTTP transaction block.
+   - The frontend polls `GET /api/documents/{id}/status` or listens to status changes, presenting users with real-time chunk progress without hanging network connections.
+
+--------------------------------------------------------------------------------
+
+Q52 [MULTI-TENANT IDEMPOTENCY: SHA-256 DEDUPLICATION & CROSS-TENANT ISOLATION]: How is payload idempotency implemented using SHA-256 digests, and why must deduplication queries ALWAYS be tenant-scoped?
+A:
+1. What the Implemented Code Does:
+   - When a document is uploaded, the server computes `hashlib.sha256(content).hexdigest()`.
+   - Before kicking off parsing or embedding generation, the server queries the database:
+     `SELECT id FROM documents WHERE tenant_id = :tenant_id AND file_hash = :hash AND status = 'READY'`
+   - If an existing record is found, the server immediately returns `HTTP 200 OK` with `is_duplicate: True` and the existing document ID.
+   - Redundant chunk parsing, embedding API token costs, and vector storage bloat are completely eliminated.
+2. The Critical Security Vulnerability of Global Deduplication (BOLA / IDOR):
+   - A naive implementation might check `WHERE file_hash = :hash` globally across all tenants to save global storage.
+   - If Tenant A uploads a proprietary acquisition agreement, and Tenant B uploads the same document, a global check would link Tenant B to Tenant A's document record.
+   - This leaks document IDs, metadata, and enables Tenant B to delete or query chunks belonging to Tenant A.
+   - Deduplication MUST ALWAYS be scoped strictly by `(tenant_id, file_hash)` via a compound index `ix_documents_tenant_file_hash`.
+
+--------------------------------------------------------------------------------
+
+Q53 [DISTRIBUTED RESILIENCE: EXPONENTIAL BACKOFF WITH CRYPTOGRAPHIC JITTER ON EMBEDDING BATCHES]: Why does naive retry logic cause thundering herd problems during upstream rate limits, and how does exponential backoff with jitter solve it?
+A:
+1. The Thundering Herd Problem:
+   - When an upstream embedding API (e.g. OpenRouter or OpenAI) returns `HTTP 429 Too Many Requests`, a naive system retries immediately or on a fixed interval (e.g. every 1.0 second).
+   - If 20 background workers all hit rate limits simultaneously, fixed retries cause all 20 workers to retry in lockstep at t=1s, t=2s, t=3s, perpetually re-triggering the provider's rate limiter.
+2. Exponential Backoff with Jitter Formulation:
+   - Sleep time scales exponentially with each failed attempt:
+     Sleep Time = (initial_backoff * 2^(attempt - 1)) + Jitter
+   - Cryptographic Jitter: `secrets.SystemRandom().uniform(0.1, 0.5)` introduces entropy, desynchronizing worker retry schedules and spreading requests evenly across time windows.
+   - If retries are exhausted (e.g. after 3 attempts), the worker logs a structured error and marks the document FAILED, preventing infinite resource leaks.
+
+--------------------------------------------------------------------------------
+
+Q54 [DATA RETENTION & LIFECYCLE: 7-DAY TTL CLEANUP & ATOMIC CASCADING VECTOR PURGING]: How is the automated 7-day TTL retention policy enforced, and how does the database ensure vector chunks are never orphaned?
+A:
+1. Automated Expiration Assignment:
+   - When a document is uploaded, it is stamped with `expires_at = datetime.now(UTC) + timedelta(days=7)`.
+   - A dedicated index `ix_documents_expires_at` is maintained for efficient range querying.
+2. Background Cleanup Daemon:
+   - A background loop (`start_periodic_cleanup_loop`) runs every 3600 seconds (1 hour).
+   - In each cycle, it queries: `SELECT id FROM documents WHERE expires_at <= NOW()`
+   - Expired records are deleted atomically.
+3. PostgreSQL Cascading Deletion:
+   - In `models.py`, `DocumentChunk` defines `ForeignKey("documents.id", ondelete="CASCADE")`.
+   - Deleting the parent document row triggers database-level cascade deletion of all child chunks, their 1536-dimensional `pgvector` embeddings, and full-text search tsvectors in a single atomic transaction.
+   - Ghost/orphaned vectors never accumulate in the index.
+
+--------------------------------------------------------------------------------
+
+Q55 [DISASTER RECOVERY & BLAST RADIUS: FAILURE MODES ACROSS REDIS, OPENROUTER, AND DATABASE]: How does the platform isolate blast radiuses when Redis, OpenRouter, or PostgreSQL experiences an outage?
+A:
+1. Redis Outage Blast Radius:
+   - Impact: L1 semantic query cache misses; rate limiter transparently falls back to the in-memory sliding-window token bucket (`app/api/ratelimit.py`).
+   - Zero Data Loss: Application data resides in PostgreSQL, not Redis. System continues serving queries with minor latency increase.
+2. OpenRouter Outage / 429 Rate Limits:
+   - Impact: Generative LLM synthesis and embedding generation fail.
+   - Mitigation: Workers retry with exponential backoff and jitter. The LangGraph agent router intercepts LLM failures, prevents credential leakage, and returns a clean, degraded user response.
+3. Supabase / PostgreSQL Outage:
+   - Impact: API requests fail fast with sanitized RFC-7807 JSON errors.
+   - Mitigation: Connection pooling pre-ping (`pool_pre_ping=True`) discards dead sockets. No partial states or broken chunks are written because chunk writes and document READY transitions are atomic.
+
+

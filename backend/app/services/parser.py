@@ -64,6 +64,21 @@ class PDFParser:
             )
 
     @classmethod
+    def validate_pdf_bytes(cls, pdf_bytes: bytes) -> None:
+        """Verify the byte stream begins with %PDF- header and is unencrypted."""
+        cls.validate_magic_bytes(pdf_bytes)
+        try:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            if doc.is_encrypted:
+                raise PDFEncryptedError(
+                    "Password-protected PDFs cannot be processed. Please unlock the file first."
+                )
+        except PDFEncryptedError:
+            raise
+        except Exception as e:
+            raise InvalidPDFError(f"Invalid PDF document: {e}") from e
+
+    @classmethod
     def clean_text(cls, raw_text: str) -> str:
         """
         Normalize extracted text.

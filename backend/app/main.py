@@ -12,6 +12,7 @@ Architecture:
     Next.js Frontend → FastAPI Backend → Supabase / Redis / OpenRouter
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -26,6 +27,7 @@ from app.api.health import router as health_router
 from app.api.retrieval import router as retrieval_router
 from app.auth.sanitizer import install_log_sanitizer, sanitize_text
 from app.config import settings
+from app.workers.cleanup_service import start_periodic_cleanup_loop
 
 # ── Logging & Secret Scrubbing ───────────────────────────────────────
 logging.basicConfig(
@@ -51,8 +53,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         "Starting Enterprise RAG API | env=%s",
         settings.environment,
     )
+    cleanup_task = None
+    if settings.environment != "test":
+        cleanup_task = asyncio.create_task(start_periodic_cleanup_loop(interval_seconds=3600))
+
     yield
+
     # ── Shutdown ──
+    if cleanup_task:
+        cleanup_task.cancel()
     logger.info("Shutting down Enterprise RAG API")
 
 

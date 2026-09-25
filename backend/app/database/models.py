@@ -74,6 +74,21 @@ class Document(Base):
         nullable=True,
         doc="Error details if ingestion failed",
     )
+    file_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="SHA-256 hex digest of original file for idempotency and deduplication",
+    )
+    page_count: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        doc="Total number of pages extracted from document",
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Automated 7-day TTL expiration timestamp for automated data retention",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -97,6 +112,8 @@ class Document(Base):
     __table_args__ = (
         Index("ix_documents_tenant_status", "tenant_id", "status"),
         Index("ix_documents_tenant_created", "tenant_id", "created_at"),
+        Index("ix_documents_tenant_file_hash", "tenant_id", "file_hash"),
+        Index("ix_documents_expires_at", "expires_at"),
     )
 
 
