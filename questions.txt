@@ -76,3 +76,53 @@ A:
 3. For automated unit tests that require environment configurations, provide mock or synthetic environment variables inside the CI runner rather than real API keys.
 4. Implement automated secret detection steps (like `git ls-files` audits or tools like Trufflehog/GitGuardian) to fail the build immediately if someone accidentally commits a `.env` or credentials file.
 
+--------------------------------------------------------------------------------
+
+Q15 [SCENARIO]: A critical zero-day security bug or crash is discovered in production on main. Direct push to main is blocked by branch protection rulesets. How do you deploy a hotfix without weakening repository security?
+A:
+1. Branch `hotfix/<issue-name>` directly from `main`.
+2. Apply the minimal targeted fix and write an automated test reproducing and resolving the issue.
+3. Verify all checks pass locally (`pytest`, `ruff`, `npm run build`).
+4. Push `hotfix/<issue-name>` to GitHub and open an expedited Pull Request targeting `main`.
+5. Automated CI runs (`backend-ci`, `frontend-ci`, `security-scan`).
+6. Once green, merge the PR into `main`.
+7. Crucial step: Immediately merge or backport the hotfix commit into `develop` so that future feature branches cut from `develop` do not reintroduce the bug.
+
+--------------------------------------------------------------------------------
+
+Q16 [SCENARIO]: A CI job fails intermittently (flaky test) because an external API (like Supabase or OpenRouter) experiences network latency or rate limits. Developers request disabling CI to merge their PRs. How do you respond and solve this?
+A:
+1. Never disable CI branch protection: Disabling protection eliminates regression and security guardrails for the entire team.
+2. Root Cause: Unit and integration tests in CI must be completely hermetic and deterministic. They must NEVER call live external network services.
+3. Solution: Use dependency injection and mocking libraries (e.g., `unittest.mock`, `respx` for HTTPX, or a local in-memory SQLite/test database container) to simulate API responses and status codes in CI.
+4. Reserve live network calls for separate, scheduled End-to-End (E2E) smoke tests outside the merge-blocking PR loop.
+
+--------------------------------------------------------------------------------
+
+Q17 [SCENARIO]: A PR adding `GET /api/documents/{doc_id}` passes all CI linting, type checks, and unit tests, but contains a severe cross-tenant data leak (IDOR). How did this slip past CI, and how do you structurally prevent it?
+A:
+1. Why CI missed it: Linters (Ruff) and type checkers (MyPy) verify syntax and typing contracts; they have no understanding of business authorization or tenant isolation semantics. If the author wrote a unit test that only tested Tenant A querying Tenant A's document, the test passed 100%.
+2. Vulnerability: Insecure Direct Object Reference (IDOR) — Tenant B can view Tenant A's document simply by passing Tenant A's `doc_id` in the URL.
+3. Structural Prevention:
+   - Require `tenant_id` at the database query abstraction layer so that every query unconditionally executes `WHERE id = :doc_id AND tenant_id = :current_tenant_id`.
+   - Implement automated multi-tenant integration tests that always seed two distinct tenants (Tenant A and Tenant B) and explicitly assert that Tenant B querying Tenant A's resources returns 404 or 403.
+   - Mandate the PR Review checklist item: "Verified tenant isolation on all newly introduced database queries."
+
+--------------------------------------------------------------------------------
+
+Q18 [DECISION]: Why did we choose a Monorepo structure (frontend + backend + docs in one repo) over separate repositories for frontend and backend?
+A:
+- Atomic Full-Stack Features: A single Pull Request can introduce a backend API contract change (e.g., document upload schema) and the corresponding frontend UI form simultaneously, ensuring full-stack features are reviewed, tested, and merged in lockstep.
+- Single Source of Truth: Architecture documentation, interview guides, and environment configurations stay version-synchronized with the codebase.
+- Unified Local Development: A single `docker-compose.yml` can spin up frontend, backend, database, and Redis with one command.
+- Tradeoffs: Requires path-aware CI triggers and distinct language tooling (Python + Node.js), but for cross-functional teams building an integrated SaaS product, the reduction in coordination overhead far outweighs the complexity.
+
+--------------------------------------------------------------------------------
+
+Q19 [DECISION]: In Day 2 ingestion, why decouple PDF upload (202 Accepted) from chunking and embedding using asynchronous background workers?
+A:
+- Latency & Timeout: Parsing a 50-page PDF, generating embeddings, and inserting vectors takes 15–60 seconds. Synchronous processing blocks HTTP workers, causing client timeouts (504 Gateway Timeout) and degrading user experience.
+- Thread Starvation: Under concurrent traffic (e.g., 20 users uploading files simultaneously), synchronous blocking consumes all Uvicorn worker threads, rendering the API completely unresponsive even for lightweight health check or chat requests.
+- Fault Tolerance: Asynchronous background processing allows retries with exponential backoff if an embedding API fails, without forcing the user to re-upload the file.
+
+
