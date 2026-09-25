@@ -11,8 +11,20 @@ Why Pydantic Settings?
 - Fails fast if required config is missing
 """
 
+from pathlib import Path
+
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Candidate paths to locate .env whether running from project root or backend folder
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ROOT_DIR = _BACKEND_DIR.parent
+_CANDIDATE_ENVS = [
+    _BACKEND_DIR / ".env",
+    _ROOT_DIR / ".env",
+    Path(".env"),
+]
+_ENV_FILES = [str(p) for p in _CANDIDATE_ENVS if p.is_file()]
 
 
 class Settings(BaseSettings):
@@ -53,6 +65,12 @@ class Settings(BaseSettings):
         description="Redis connection URL",
     )
 
+    # ---------- OpenRouter ----------
+    openrouter_api_key: str = Field(
+        default="",
+        description="OpenRouter API key for LLM and embeddings",
+    )
+
     # ---------- LangSmith ----------
     langchain_tracing_v2: bool = Field(
         default=False,
@@ -67,7 +85,11 @@ class Settings(BaseSettings):
         description="LangSmith project name",
     )
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILES if _ENV_FILES else ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 # Singleton instance — imported throughout the app
