@@ -1,0 +1,92 @@
+# ============================================
+# Enterprise RAG Platform — Render Infrastructure Blueprint
+# ============================================
+# Declarative Infrastructure-as-Code for zero-downtime deployment.
+#
+# Free/Low-Cost Architecture:
+# - Web API: FastAPI Cluster with multi-stage hardened Docker image
+# - Background Worker: Dedicated ingestion and 7-day TTL cleanup worker
+# - Redis: In-memory queue and rate-limiting store
+#
+# Usage:
+#   Connect this GitHub repository to Render Blueprints (render.com).
+
+services:
+  # ── 1. Backend Web Service (FastAPI) ──────────────────────────────────
+  - type: web
+    name: enterprise-rag-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile.prod
+    dockerContext: ./backend
+    plan: free
+    region: oregon
+    healthCheckPath: /health/ready
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: BACKEND_CORS_ORIGINS
+        value: https://localhost:3000
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: documents
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: enterprise-rag-redis
+          property: connectionString
+      - key: LANGCHAIN_TRACING_V2
+        value: "false"
+      - key: LANGCHAIN_PROJECT
+        value: enterprise-rag-prod
+      - key: LANGCHAIN_API_KEY
+        sync: false
+
+  # ── 2. Background Ingestion & TTL Worker ──────────────────────────────
+  - type: worker
+    name: enterprise-rag-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile.prod
+    dockerContext: ./backend
+    dockerCommand: python -m app.workers.main
+    plan: free
+    region: oregon
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: documents
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: enterprise-rag-redis
+          property: connectionString
+      - key: LANGCHAIN_TRACING_V2
+        value: "false"
+      - key: LANGCHAIN_API_KEY
+        sync: false
+
+  # ── 3. Redis Instance ────────────────────────────────────────────────
+  - type: redis
+    name: enterprise-rag-redis
+    plan: free
+    region: oregon
+    ipAllowList: [] # Internal network only
