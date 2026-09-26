@@ -79,6 +79,8 @@ class MetricsTracker:
         self._tenant_request_counts: dict[str, int] = defaultdict(int)
         self._tenant_token_counts: dict[str, int] = defaultdict(int)
         self._error_counts: dict[str, int] = defaultdict(int)
+        self._route_counts: dict[str, int] = defaultdict(int)
+        self._relevance_counts: dict[str, int] = defaultdict(int)
 
     def record_query(
         self,
@@ -86,8 +88,10 @@ class MetricsTracker:
         latency_ms: float,
         tokens_used: int = 0,
         is_error: bool = False,
+        route: str = "retrieve",
+        relevance: str = "relevant",
     ) -> None:
-        """Record latency, token usage, and status for a completed user query."""
+        """Record latency, token usage, route, and status for a completed user query."""
         with self._lock:
             self._query_latencies_ms.append(latency_ms)
             # Keep sliding window of latest 5000 queries to bound memory
@@ -99,6 +103,8 @@ class MetricsTracker:
                 self._tenant_token_counts[tenant_id] += tokens_used
             if is_error:
                 self._error_counts[tenant_id] += 1
+            self._route_counts[route] += 1
+            self._relevance_counts[relevance] += 1
 
     def get_summary(self) -> dict[str, Any]:
         """Compute aggregated operational metrics, percentiles, and uptime."""
@@ -118,12 +124,25 @@ class MetricsTracker:
             total_errors = sum(self._error_counts.values())
             error_rate = round(total_errors / total_requests, 4) if total_requests > 0 else 0.0
 
+            langsmith_active = bool(settings.langchain_tracing_v2 and settings.langchain_api_key)
+            langsmith_project = settings.langchain_project or "enterprise-rag"
+            langsmith_url = (
+                f"https://smith.langchain.com/o/default/projects/p/{langsmith_project}"
+                if langsmith_active
+                else None
+            )
+
             return {
                 "uptime_seconds": uptime_seconds,
                 "total_queries": total_requests,
                 "total_tokens_consumed": total_tokens,
                 "total_errors": total_errors,
                 "error_rate": error_rate,
+                "route_distribution": dict(self._route_counts),
+                "relevance_distribution": dict(self._relevance_counts),
+                "langsmith_active": langsmith_active,
+                "langsmith_project": langsmith_project,
+                "langsmith_url": langsmith_url,
                 "latency_percentiles_ms": {
                     "p50": get_percentile(0.50),
                     "p90": get_percentile(0.90),
@@ -141,6 +160,8 @@ class MetricsTracker:
             self._tenant_request_counts.clear()
             self._tenant_token_counts.clear()
             self._error_counts.clear()
+            self._route_counts.clear()
+            self._relevance_counts.clear()
 
 
 class StructuredJsonFormatter(logging.Formatter):

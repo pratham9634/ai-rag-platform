@@ -17,7 +17,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,7 +25,7 @@ from app.agent.graph import AgentWorkflow
 from app.api.ratelimit import RateLimiter
 from app.auth.security import get_current_tenant_id
 from app.database.models import Conversation, Message
-from app.database.session import get_db
+from app.database.session import async_session_factory, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,10 @@ class ChatQueryRequest(BaseModel):
 
     conversation_id: str | None = None
     query: str = Field(..., min_length=1, max_length=4000)
+    model: str | None = None
+    top_k: int | None = None
+    enable_web_search: bool | None = None
+    history: list[dict[str, str]] | None = None
 
 
 class ChatQueryResponse(BaseModel):
@@ -201,6 +205,40 @@ async def get_conversation_messages(
     ]
 
 
+@router.delete(
+    "/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a conversation and all its messages",
+)
+async def delete_conversation(
+    conversation_id: uuid.UUID,
+    tenant_id: Annotated[str, Depends(get_current_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Delete a conversation thread and all associated messages for the active tenant."""
+    conv_query = select(Conversation).where(
+        Conversation.id == conversation_id,
+        Conversation.tenant_id == tenant_id,
+    )
+    conv_result = await db.execute(conv_query)
+    conv = conv_result.scalar_one_or_none()
+    if not conv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found.",
+        )
+
+    # Delete all associated messages
+    await db.execute(
+        delete(Message).where(
+            Message.conversation_id == conversation_id,
+            Message.tenant_id == tenant_id,
+        )
+    )
+    await db.delete(conv)
+    await db.flush()
+
+
 # ── Agentic Query & Streaming Endpoints ──────────────────────────────
 @router.post(
     "/query",
@@ -215,6 +253,10 @@ async def chat_query(
     x_openrouter_api_key: Annotated[
         str | None,
         Header(alias="X-OpenRouter-API-Key", description="Optional BYOK OpenRouter API key"),
+    ] = None,
+    x_byok_api_key: Annotated[
+        str | None,
+        Header(alias="X-BYOK-API-Key", description="Optional BYOK OpenRouter API key from UI"),
     ] = None,
 ) -> Any:
     """
@@ -274,19 +316,42 @@ async def chat_query(
     )
     db.add(user_msg)
 
-    # 3. Run Agent Workflow
+    # 3. Retrieve past conversation history for conversational awareness
+    chat_history: list[dict[str, str]] = []
+    if payload.history:
+        chat_history = payload.history
+    elif payload.conversation_id:
+        history_query = (
+            select(Message)
+            .where(
+                Message.conversation_id == conv_id,
+                Message.tenant_id == tenant_id,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(8)
+        )
+        history_res = await db.execute(history_query)
+        past_msgs = list(reversed(history_res.scalars().all()))
+        chat_history = [{"role": m.role, "content": m.content} for m in past_msgs]
+
+    effective_api_key = x_byok_api_key or x_openrouter_api_key
+
+    # 4. Run Agent Workflow with memory
     workflow = AgentWorkflow(db=db)
     final_state = await workflow.run(
         tenant_id=tenant_id,
         query=payload.query,
-        api_key_override=x_openrouter_api_key,
+        api_key_override=effective_api_key,
+        model_override=payload.model,
+        top_k=payload.top_k,
+        chat_history=chat_history,
     )
 
     answer = final_state.get("generation", "No response generated.")
     citations = final_state.get("citations", [])
     route = final_state.get("route", "retrieve")
 
-    # 4. Record assistant message with citations
+    # 5. Record assistant message with citations
     assistant_msg = Message(
         id=uuid.uuid4(),
         conversation_id=conv_id,
@@ -297,7 +362,7 @@ async def chat_query(
         created_at=datetime.now(UTC),
     )
     db.add(assistant_msg)
-    await db.flush()
+    await db.commit()
 
     return ChatQueryResponse(
         conversation_id=str(conv_id),
@@ -321,9 +386,13 @@ async def chat_stream(
         str | None,
         Header(alias="X-OpenRouter-API-Key"),
     ] = None,
+    x_byok_api_key: Annotated[
+        str | None,
+        Header(alias="X-BYOK-API-Key"),
+    ] = None,
 ) -> StreamingResponse:
     """
-    Stream tokens in real-time using Server-Sent Events (SSE).
+    Stream tokens in real-time using Server-Sent Events (SSE) with conversational memory.
 
     SSE Events:
     - `data: {"type": "route", "route": "retrieve"}`
@@ -351,30 +420,14 @@ async def chat_stream(
             }
             yield f"data: {json.dumps(status_retrieval)}\n\n"
 
-            # 3. Execute LangGraph agentic workflow
-            workflow = AgentWorkflow(db=db)
-            final_state = await workflow.run(
-                tenant_id=tenant_id,
-                query=payload.query,
-                api_key_override=x_openrouter_api_key,
-            )
-
-            answer = final_state.get("generation", "")
-            citations = final_state.get("citations", [])
-            route = final_state.get("route", "retrieve")
-
-            # 4. Status update for generation
-            status_gen = {
-                "type": "status",
-                "stage": "generating",
-                "message": "Synthesizing grounded answer with citations...",
-            }
-            yield f"data: {json.dumps(status_gen)}\n\n"
-            await asyncio.sleep(0.04)
-
-            # 5. Resolve or create persistent conversation
+            # 3. Resolve existing conversation & load prior conversation history
             conv_id: uuid.UUID
             is_new_conv = True
+            chat_history: list[dict[str, str]] = []
+
+            if payload.history:
+                chat_history = payload.history
+
             if payload.conversation_id:
                 try:
                     conv_id = uuid.UUID(payload.conversation_id)
@@ -386,6 +439,21 @@ async def chat_stream(
                     )
                     if conv_check.scalar_one_or_none():
                         is_new_conv = False
+                        if not payload.history:
+                            history_query = (
+                                select(Message)
+                                .where(
+                                    Message.conversation_id == conv_id,
+                                    Message.tenant_id == tenant_id,
+                                )
+                                .order_by(Message.created_at.desc())
+                                .limit(8)
+                            )
+                            h_res = await db.execute(history_query)
+                            past_msgs = list(reversed(h_res.scalars().all()))
+                            chat_history = [
+                                {"role": m.role, "content": m.content} for m in past_msgs
+                            ]
                     else:
                         conv_id = uuid.uuid4()
                 except ValueError:
@@ -393,44 +461,79 @@ async def chat_stream(
             else:
                 conv_id = uuid.uuid4()
 
+            effective_api_key = x_byok_api_key or x_openrouter_api_key
+
+            # 4. Execute LangGraph agentic workflow with full conversational memory
+            workflow = AgentWorkflow(db=db)
+            final_state = await workflow.run(
+                tenant_id=tenant_id,
+                query=payload.query,
+                api_key_override=effective_api_key,
+                model_override=payload.model,
+                top_k=payload.top_k,
+                chat_history=chat_history,
+            )
+
+            answer = final_state.get("generation", "")
+            citations = final_state.get("citations", [])
+            route = final_state.get("route", "retrieve")
+
+            # 5. Status update for generation
+            status_gen = {
+                "type": "status",
+                "stage": "generating",
+                "message": "Synthesizing grounded answer with citations...",
+            }
+            yield f"data: {json.dumps(status_gen)}\n\n"
+            await asyncio.sleep(0.04)
+
+            # 6. Save persistent conversation & messages
             now = datetime.now(UTC)
-            if is_new_conv:
-                new_conv = Conversation(
-                    id=conv_id,
-                    tenant_id=tenant_id,
-                    title=payload.query[:60] + ("..." if len(payload.query) > 60 else ""),
-                    created_at=now,
-                    updated_at=now,
-                )
-                db.add(new_conv)
-            else:
-                conv_obj = await db.get(Conversation, conv_id)
-                if conv_obj:
-                    conv_obj.updated_at = now
+            if async_session_factory is not None:
+                try:
+                    async with async_session_factory() as persist_db:
+                        if is_new_conv:
+                            new_conv = Conversation(
+                                id=conv_id,
+                                tenant_id=tenant_id,
+                                title=payload.query[:60]
+                                + ("..." if len(payload.query) > 60 else ""),
+                                created_at=now,
+                                updated_at=now,
+                            )
+                            persist_db.add(new_conv)
+                        else:
+                            conv_obj = await persist_db.get(Conversation, conv_id)
+                            if conv_obj:
+                                conv_obj.updated_at = now
 
-            # Save user message
-            user_msg = Message(
-                id=uuid.uuid4(),
-                conversation_id=conv_id,
-                tenant_id=tenant_id,
-                role="user",
-                content=payload.query,
-                created_at=now,
-            )
-            db.add(user_msg)
+                        # Save user message
+                        user_msg = Message(
+                            id=uuid.uuid4(),
+                            conversation_id=conv_id,
+                            tenant_id=tenant_id,
+                            role="user",
+                            content=payload.query,
+                            created_at=now,
+                        )
+                        persist_db.add(user_msg)
 
-            # Save assistant message with citations
-            assistant_msg = Message(
-                id=uuid.uuid4(),
-                conversation_id=conv_id,
-                tenant_id=tenant_id,
-                role="assistant",
-                content=answer,
-                citations=citations,
-                created_at=now,
-            )
-            db.add(assistant_msg)
-            await db.flush()
+                        # Save assistant message with citations
+                        assistant_msg = Message(
+                            id=uuid.uuid4(),
+                            conversation_id=conv_id,
+                            tenant_id=tenant_id,
+                            role="assistant",
+                            content=answer,
+                            citations=citations,
+                            created_at=now,
+                        )
+                        persist_db.add(assistant_msg)
+                        await persist_db.commit()
+                except Exception as persist_err:
+                    logger.error(
+                        "Failed to persist chat message in stream: %s", persist_err, exc_info=True
+                    )
 
             # 6. Send route and citations metadata
             yield f"data: {json.dumps({'type': 'route', 'route': route})}\n\n"

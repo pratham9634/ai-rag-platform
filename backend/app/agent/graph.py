@@ -135,11 +135,12 @@ class AgentWorkflow:
         query = state.get("rewritten_query") or state.get("query", "")
         api_key = state.get("api_key_override")
 
+        k_val = state.get("top_k") or 5
         results = await self.retrieval.hybrid_search(
             db=self.db,
             tenant_id=tenant_id,
             query=query,
-            top_k=5,
+            top_k=k_val,
             api_key_override=api_key,
         )
 
@@ -209,8 +210,20 @@ class AgentWorkflow:
         query = state.get("query", "")
         retry_count = state.get("retry_count", 0)
         api_key = state.get("api_key_override")
+        chat_history = state.get("chat_history", [])
 
-        prompt = QUERY_REWRITE_PROMPT.format(query=query)
+        history_lines = []
+        if chat_history:
+            for m in chat_history[-4:]:
+                r = "User" if m.get("role") == "user" else "Assistant"
+                history_lines.append(f"{r}: {m.get('content', '')}")
+        history_context = (
+            ("Recent Conversation History:\n" + "\n".join(history_lines) + "\n\n")
+            if history_lines
+            else ""
+        )
+
+        prompt = QUERY_REWRITE_PROMPT.format(query=query, history_context=history_context)
         messages = [{"role": "user", "content": prompt}]
 
         rewritten = await self.llm.generate_response(
@@ -228,10 +241,11 @@ class AgentWorkflow:
         }
 
     async def generate_answer(self, state: AgentState) -> dict[str, Any]:
-        """Synthesize answer grounded strictly in retrieved documents."""
+        """Synthesize answer grounded strictly in retrieved documents with conversational memory."""
         documents = state.get("documents", [])
         query = state.get("query", "")
         api_key = state.get("api_key_override")
+        chat_history = state.get("chat_history", [])
 
         if not documents:
             return {
@@ -255,13 +269,22 @@ class AgentWorkflow:
         formatted_context = "\n\n".join(context_blocks)
 
         system_msg = GENERATOR_SYSTEM_PROMPT.format(context=formatted_context)
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": query},
-        ]
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_msg}]
 
+        # Inject recent multi-turn conversation memory (last 6 messages = ~3 full turns)
+        if chat_history:
+            for turn in chat_history[-6:]:
+                role = "user" if turn.get("role") == "user" else "assistant"
+                content = (turn.get("content") or "").strip()
+                if content:
+                    messages.append({"role": role, "content": content})
+
+        messages.append({"role": "user", "content": query})
+
+        model = state.get("model_override")
         generation = await self.llm.generate_response(
             messages=messages,
+            model=model,
             temperature=0.1,
             api_key_override=api_key,
         )
@@ -269,23 +292,34 @@ class AgentWorkflow:
         return {"generation": generation}
 
     async def generate_direct(self, state: AgentState) -> dict[str, Any]:
-        """Respond to conversational greetings or general inquiries directly."""
+        """Respond to conversational greetings or general inquiries directly with memory."""
         query = state.get("query", "")
         api_key = state.get("api_key_override")
+        chat_history = state.get("chat_history", [])
 
-        messages = [
+        messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": (
                     "You are the Enterprise RAG Assistant. Respond politely and concisely. "
                     "Offer to answer questions regarding corporate documentation and data."
                 ),
-            },
-            {"role": "user", "content": query},
+            }
         ]
 
+        if chat_history:
+            for turn in chat_history[-6:]:
+                role = "user" if turn.get("role") == "user" else "assistant"
+                content = (turn.get("content") or "").strip()
+                if content:
+                    messages.append({"role": role, "content": content})
+
+        messages.append({"role": "user", "content": query})
+
+        model = state.get("model_override")
         generation = await self.llm.generate_response(
             messages=messages,
+            model=model,
             temperature=0.3,
             api_key_override=api_key,
         )
@@ -297,6 +331,9 @@ class AgentWorkflow:
         tenant_id: str,
         query: str,
         api_key_override: str | None = None,
+        model_override: str | None = None,
+        top_k: int | None = None,
+        chat_history: list[dict[str, str]] | None = None,
     ) -> AgentState:
         """Execute full agent graph and return final state."""
         initial_state: AgentState = {
@@ -311,7 +348,10 @@ class AgentWorkflow:
             "retry_count": 0,
             "generation": "",
             "error": None,
+            "chat_history": chat_history or [],
             "api_key_override": api_key_override,
+            "model_override": model_override,
+            "top_k": top_k,
         }
 
         run_config = get_tracer_run_config(
@@ -327,5 +367,7 @@ class AgentWorkflow:
             tenant_id=tenant_id,
             latency_ms=elapsed_ms,
             is_error=bool(final_state.get("error")),
+            route=final_state.get("route", "retrieve"),
+            relevance=final_state.get("relevance", "relevant"),
         )
         return final_state

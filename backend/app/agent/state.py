@@ -31,5 +31,10 @@ class AgentState(TypedDict, total=False):
     generation: str
     error: str | None
 
+    # Multi-turn conversation awareness
+    chat_history: list[dict[str, str]]
+
     # User BYOK override if supplied
     api_key_override: str | None
+    model_override: str | None
+    top_k: int | None

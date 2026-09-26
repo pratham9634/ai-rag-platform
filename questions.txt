@@ -809,5 +809,76 @@ A:
    - Server-only secrets (`CLERK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`) lack this prefix and are physically stripped from client JavaScript bundles during compilation.
    - In-memory BYOK OpenRouter keys sent by users are scrubbed by `SensitiveDataFilter` from all application logs and LangSmith trace trees.
 
+--------------------------------------------------------------------------------
+
+Q66 [SCALING TO 100K DAU: DISTRIBUTED RAG ARCHITECTURE]: How do you scale an agentic RAG platform from 50 to 100,000 DAU, and what are the specific bottlenecks in vector similarity search, Celery ingestion queues, and connection pools?
+A:
+1. Identifying Critical Bottlenecks at 100k DAU (350–1,200 QPS):
+   - Vector Index Saturation: As document chunks scale into tens of millions, IVFFlat or HNSW vector indexes exceed server RAM. If index vectors must be paged from SSD, search latency spikes from 8ms to 450ms+.
+   - Postgres Connection Exhaustion: 32 autoscaled FastAPI pods maintaining standard connection pools will overwhelm PostgreSQL `max_connections`, causing fatal connection refusals.
+   - CPU Starvation from PDF Ingestion: Concurrent multi-page PDF uploads run PyMuPDF parsing and embedding math, consuming 100% of host CPU and starving real-time SSE token streaming threads.
+2. The Scaled Multi-Tier Solution:
+   - Supavisor Connection Pooling: Multiplexes thousands of client requests over ~150 physical transaction-mode connections (Port 6543).
+   - Read Replicas & Read/Write Routing: Primary node handles document uploads and conversation writes; read replicas handle hybrid pgvector cosine similarity searches and full-text keyword searches.
+   - KEDA-Autoscaled Celery Workers: Ingestion tasks are queued in Redis and executed by dedicated worker pods scaled dynamically based on Redis queue depth, completely isolating CPU load from web APIs.
+   - HNSW Partitioning: Partitioning the `document_chunks` table by `tenant_id` ensures index scans only search the active tenant's partition, maintaining sub-15ms vector retrieval even with 45M total chunks.
+
+--------------------------------------------------------------------------------
+
+Q67 [SEMANTIC CACHING FOR COST & LATENCY OPTIMIZATION]: How does semantic query caching work in an enterprise RAG system, how do you prevent cross-tenant cache leakage, and when should the cache be invalidated?
+A:
+1. Mechanics of Semantic Caching:
+   - Traditional HTTP caching relies on exact string match (hash of query). However, in RAG, users ask identical questions with slight phrasing variations ("What is the PTO policy?" vs "How many vacation days do we get?").
+   - Semantic caching embeds incoming queries and queries a Redis vector index for prior queries within the same tenant where cosine similarity exceeds a high confidence threshold (`> 0.98`).
+   - If matched, the platform returns the cached response in < 40ms, saving both LLM token spend and vector retrieval overhead.
+2. Preventing Cross-Tenant Data Leakage:
+   - The cache key MUST strictly incorporate the tenant identifier: `cache:{tenant_id}:{query_embedding}`.
+   - Vector similarity comparisons in Redis are strictly scoped using tenant filtering tags. A tenant can never match against another tenant's cached answers.
+3. Cache Invalidation Triggers:
+   - Document Upload or Deletion: Whenever a document is added, updated, or purged within a tenant, the tenant's cache epoch counter is bumped, instantly invalidating stale responses.
+   - Time-to-Live (TTL): All cache entries expire automatically within 24 hours to prevent stale policy responses.
+
+--------------------------------------------------------------------------------
+
+Q68 [BYOK SECURITY IN ENTERPRISE MULTI-TENANCY]: How do you architect Bring-Your-Own-Key (BYOK) for LLMs so that enterprise users can supply proprietary API keys without risk of storage leakage, disk logging, or cross-tenant exposure?
+A:
+1. Zero Database Persistence (Ephemeral Session Memory):
+   - Rather than storing customer API keys in PostgreSQL (which would create catastrophic breach liability during database backups or SQL dumps), keys are stored client-side in browser `sessionStorage`.
+   - The key is cleared automatically when the user closes their browser tab.
+2. Ephemeral In-Memory Transmission:
+   - The frontend passes the key to the backend in an ephemeral HTTP header: `X-BYOK-API-Key: sk-or-v1-...`.
+   - The FastAPI backend extracts the header into memory only for the duration of the request lifecycle and injects it into OpenRouter/LLM client calls as an override.
+3. Strict Header Scrubbing & Log Masking:
+   - Custom ASGI logging middleware and OpenTelemetry span processors explicitly inspect and scrub `X-BYOK-API-Key` headers before emitting logs or traces.
+   - Even in DEBUG logging mode, the key value is masked as `sk-or-v1-***` to prevent accidental disk exposure.
+
+--------------------------------------------------------------------------------
+
+Q69 [OBSERVABILITY & P99 LATENCY UNDER AGENTIC REWRITING]: Why do agentic self-correcting RAG loops exhibit severe P99 latency tail-spikes, and how do you monitor and bound them using metrics, percentiles, and LangGraph retry limits?
+A:
+1. Root Cause of Agentic Tail Latency (P99 Spikes):
+   - In a standard RAG pipeline, latency is deterministic: 1 retrieval + 1 LLM call (~1,200 ms).
+   - In an agentic self-correcting pipeline (LangGraph), an ambiguous or out-of-domain query triggers: Router LLM (300ms) → Initial Hybrid Retrieval (80ms) → Relevance Grader LLM (400ms) → Query Rewriter LLM (500ms) → Second Hybrid Retrieval (80ms) → Grounded Generator LLM (1,500ms).
+   - A single query can accumulate 3–5 LLM round-trips, ballooning P99 latency to 4,000–6,000 ms.
+2. Bounding Agentic Cycles:
+   - Strict StateGraph Loop Limits: `MAX_RETRIEVAL_RETRIES = 1`. If the relevance grader fails a second time, the workflow terminates immediately with a graceful fallback rather than entering an infinite retry loop.
+   - Client Token Streaming (SSE): Initial routing and retrieval events are streamed immediately (`data: {"type": "status", "message": "Searching knowledge base..."}`) within 40ms, providing responsive UX and eliminating perceived user stall.
+3. Observability & Percentile Tracking:
+   - Native Prometheus `/health/metrics` records query duration into sliding-window histogram buckets to report true P50, P90, and P99 percentiles instead of deceptive arithmetic means.
+
+--------------------------------------------------------------------------------
+
+Q70 [DOCUMENT DATA LIFECYCLE, 7-DAY TTL & COMPLIANCE]: How do you implement a robust, production-grade 7-day TTL cleanup engine for vector databases that satisfies GDPR/SOC2 compliance without causing table bloat or locking active reads?
+A:
+1. The Problem with Naive Row-by-Row Deletions (`DELETE FROM chunks`):
+   - In PostgreSQL, executing `DELETE FROM document_chunks WHERE expires_at < NOW()` creates dead row tuples that remain in disk pages until `VACUUM` runs.
+   - For high-volume vector tables, repeated deletes cause index fragmentation, bloat HNSW graphs, and degrade search performance.
+2. The Production Architecture:
+   - Automated Background Daemon: An asynchronous daemon runs hourly, querying expired document records in small batches (`LIMIT 50`) to avoid long-lived exclusive table locks.
+   - Cascading Foreign Key Purges: Deleting an expired document record triggers `ON DELETE CASCADE` across `document_chunks`, atomically removing chunks and raw files.
+   - S3 Storage Purging: The daemon queries the private storage bucket and deletes corresponding PDF binaries, satisfying GDPR "Right to Be Forgotten" standards.
+   - Partition Dropping at 100k Scale: At high enterprise volumes, tables are partitioned by week. Expired data is dropped instantly using `DROP TABLE document_chunks_week_X;`, which is an instantaneous metadata operation that causes zero IOPS bloat and zero vacuum overhead.
+
+
 
 

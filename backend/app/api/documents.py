@@ -23,7 +23,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -39,12 +39,31 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
-# 10 MB upload limit
-MAX_FILE_SIZE = 10 * 1024 * 1024
+# Strict Resource Constraints
+MAX_DOCUMENTS_PER_TENANT = 10
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB per PDF
+MAX_VAULT_STORAGE_BYTES = 100 * 1024 * 1024  # 100 MB total vault storage
+MAX_CHUNKS_PER_TENANT = 1000
 DEFAULT_TTL_DAYS = 7
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
+class TenantUsageResponse(BaseModel):
+    """Tenant document quota, storage consumption, and chunk capacity."""
+
+    tenant_id: str
+    document_count: int
+    max_documents: int = MAX_DOCUMENTS_PER_TENANT
+    storage_bytes: int
+    max_storage_bytes: int = MAX_VAULT_STORAGE_BYTES
+    storage_mb: float
+    max_storage_mb: float = 100.0
+    chunk_count: int
+    max_chunks: int = MAX_CHUNKS_PER_TENANT
+    retention_days: int = DEFAULT_TTL_DAYS
+    oldest_document_expires_at: datetime | None = None
+
+
 class DocumentResponse(BaseModel):
     """Document metadata response model."""
 
@@ -95,6 +114,45 @@ class DocumentCleanupResponse(BaseModel):
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
+@router.get(
+    "/usage",
+    response_model=TenantUsageResponse,
+    summary="Get tenant document quota, vault storage, and chunk capacity",
+)
+async def get_tenant_usage(
+    tenant_id: Annotated[str, Depends(get_current_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Any:
+    """Retrieve document count, vault storage bytes, and pgvector chunk counts for tenant."""
+    docs_query = (
+        select(Document)
+        .where(Document.tenant_id == tenant_id, Document.status != "FAILED")
+        .options(selectinload(Document.chunks))
+        .order_by(Document.expires_at.asc())
+    )
+    res = await db.execute(docs_query)
+    docs = res.scalars().all()
+
+    doc_count = len(docs)
+    total_bytes = sum(d.file_size for d in docs)
+    total_chunks = sum(len(d.chunks) for d in docs)
+    oldest_expiry = docs[0].expires_at if (docs and docs[0].expires_at) else None
+
+    return TenantUsageResponse(
+        tenant_id=tenant_id,
+        document_count=doc_count,
+        max_documents=MAX_DOCUMENTS_PER_TENANT,
+        storage_bytes=total_bytes,
+        max_storage_bytes=MAX_VAULT_STORAGE_BYTES,
+        storage_mb=round(total_bytes / (1024 * 1024), 2),
+        max_storage_mb=100.0,
+        chunk_count=total_chunks,
+        max_chunks=MAX_CHUNKS_PER_TENANT,
+        retention_days=DEFAULT_TTL_DAYS,
+        oldest_document_expires_at=oldest_expiry,
+    )
+
+
 @router.post(
     "/upload",
     response_model=DocumentUploadResponse,
@@ -113,6 +171,7 @@ async def upload_document(
     Upload a PDF document for asynchronous background ingestion.
 
     - Validates magic bytes (%PDF-) and file size <= 10MB
+    - Enforces tenant limits: max 10 PDFs, max 100MB vault storage
     - Computes SHA-256 digest for multi-tenant idempotency and deduplication
     - If already ingested for this tenant, skips redundant processing (HTTP 200)
     - If new, creates PENDING document record with 7-day TTL and dispatches worker (HTTP 202)
@@ -155,6 +214,49 @@ async def upload_document(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+
+    # 4. Check tenant document quota (max 10 PDFs)
+    count_stmt = select(func.count(Document.id)).where(
+        Document.tenant_id == tenant_id,
+        Document.status != "FAILED",
+    )
+    count_res = await db.execute(count_stmt)
+    raw_count = count_res.scalar()
+    try:
+        current_doc_count = int(raw_count) if raw_count is not None else 0
+    except (TypeError, ValueError):
+        current_doc_count = 0
+
+    if current_doc_count >= MAX_DOCUMENTS_PER_TENANT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Workspace document quota reached: Maximum {MAX_DOCUMENTS_PER_TENANT} "
+                "PDFs allowed. Please delete an older document to continue."
+            ),
+        )
+
+    # 5. Check vault storage quota (max 100 MB)
+    storage_stmt = select(func.coalesce(func.sum(Document.file_size), 0)).where(
+        Document.tenant_id == tenant_id,
+        Document.status != "FAILED",
+    )
+    storage_res = await db.execute(storage_stmt)
+    raw_storage = storage_res.scalar()
+    try:
+        current_storage = int(raw_storage) if raw_storage is not None else 0
+    except (TypeError, ValueError):
+        current_storage = 0
+
+    if current_storage + file_size > MAX_VAULT_STORAGE_BYTES:
+        max_mb = MAX_VAULT_STORAGE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Vault storage quota exceeded: Maximum {max_mb}MB "
+                "total allowed across all documents."
+            ),
+        )
 
     # 4. SHA-256 Digest for Idempotency & Deduplication
     file_hash = hashlib.sha256(content).hexdigest()
