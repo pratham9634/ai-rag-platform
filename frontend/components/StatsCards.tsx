@@ -1,64 +1,61 @@
 "use client";
 
+import React from "react";
 import { FileText, Layers, Cpu, ShieldCheck } from "lucide-react";
 
 interface StatsProps {
   docCount: number;
   chunkCount: number;
-  tenantId: string;
+  tenantId?: string;
 }
 
-export default function StatsCards({ docCount, chunkCount, tenantId }: StatsProps) {
+export default function StatsCards({ docCount, chunkCount }: StatsProps) {
   const stats = [
     {
       label: "Indexed Documents",
       value: docCount,
-      detail: "Isolated per tenant",
+      detail: "Ready for search",
       icon: FileText,
-      color: "from-blue-500/20 to-indigo-500/20 text-blue-400 border-blue-500/30",
     },
     {
-      label: "pgvector Chunks",
+      label: "Knowledge Chunks",
       value: chunkCount,
-      detail: "1536-dim HNSW indexed",
+      detail: "Indexed text sections",
       icon: Layers,
-      color: "from-purple-500/20 to-pink-500/20 text-purple-400 border-purple-500/30",
     },
     {
-      label: "Agentic RAG Engine",
-      value: "Hybrid + Rerank",
-      detail: "Dense + Sparse RRF",
+      label: "Search Engine",
+      value: "Hybrid RAG",
+      detail: "Semantic & keyword match",
       icon: Cpu,
-      color: "from-emerald-500/20 to-teal-500/20 text-emerald-400 border-emerald-500/30",
     },
     {
-      label: "Tenant Isolation",
+      label: "Data Isolation",
       value: "Active",
-      detail: tenantId.length > 16 ? `${tenantId.substring(0, 16)}...` : tenantId,
+      detail: "Workspace protected",
       icon: ShieldCheck,
-      color: "from-amber-500/20 to-orange-500/20 text-amber-400 border-amber-500/30",
     },
   ];
 
   return (
-    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {stats.map((s, idx) => {
         const Icon = s.icon;
         return (
           <div
             key={idx}
-            className="group relative overflow-hidden rounded-xl border border-white/[0.08] bg-gray-900/50 p-4 transition-all hover:border-white/[0.16] hover:bg-gray-900/80 hover:shadow-lg hover:shadow-black/40"
+            className="metric-card group"
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-gray-400">{s.label}</span>
-              <div className={`rounded-lg border bg-gradient-to-br p-1.5 ${s.color}`}>
-                <Icon className="h-4 w-4" />
+              <span className="text-xs font-medium text-[var(--ink-subtle)] tracking-[-0.01em]">{s.label}</span>
+              <div className="rounded-[var(--radius-md)] border border-[var(--hairline)] bg-[var(--surface-2)] p-1.5 text-[var(--accent)] group-hover:border-[var(--hairline-strong)] transition-colors">
+                <Icon className="h-3.5 w-3.5" />
               </div>
             </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-white">{s.value}</span>
+            <div className="mt-2.5 flex items-baseline gap-2">
+              <span className="text-xl font-semibold tracking-[-0.03em] text-[var(--ink)] font-mono">{s.value}</span>
             </div>
-            <p className="mt-1 text-[11px] text-gray-400 font-mono">{s.detail}</p>
+            <p className="mt-1 text-[11px] text-[var(--ink-tertiary)] font-mono">{s.detail}</p>
           </div>
         );
       })}

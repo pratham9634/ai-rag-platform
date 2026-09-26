@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { X, Key, Cpu, Sliders, Shield, Check, Globe } from "lucide-react";
 
 export interface SystemSettings {
@@ -23,15 +23,13 @@ const AVAILABLE_MODELS = [
     name: "Claude 3.5 Sonnet",
     provider: "Anthropic",
     badge: "Recommended",
-    badgeColor: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30",
     desc: "Top-tier agentic reasoning, citation accuracy & complex synthesis",
   },
   {
     id: "openai/gpt-4o-mini",
     name: "GPT-4o Mini",
     provider: "OpenAI",
-    badge: "Fast & Low-Cost",
-    badgeColor: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    badge: "Fast & Efficient",
     desc: "Sub-second token latency, balanced precision and cost",
   },
   {
@@ -39,7 +37,6 @@ const AVAILABLE_MODELS = [
     name: "Llama 3.1 8B Instruct",
     provider: "Meta (Open-Source)",
     badge: "100% Free Tier",
-    badgeColor: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
     desc: "Zero-cost open weights inference via OpenRouter free pool",
   },
   {
@@ -47,32 +44,25 @@ const AVAILABLE_MODELS = [
     name: "Mistral 7B Instruct",
     provider: "Mistral AI",
     badge: "100% Free Tier",
-    badgeColor: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
     desc: "Fast, concise European open-source baseline model",
   },
 ];
 
-export default function SettingsModal({
-  isOpen,
+function SettingsModalContent({
   onClose,
   settings,
   onSave,
-}: SettingsModalProps) {
+}: {
+  onClose: () => void;
+  settings: SystemSettings;
+  onSave: (newSettings: SystemSettings) => void;
+}) {
   const [selectedModel, setSelectedModel] = useState(settings.model);
   const [byokKey, setByokKey] = useState(settings.byokKey);
   const [showKey, setShowKey] = useState(false);
   const [topK, setTopK] = useState(settings.topK);
   const [enableWebSearch, setEnableWebSearch] = useState(settings.enableWebSearch);
   const [isSaved, setIsSaved] = useState(false);
-
-  useEffect(() => {
-    setSelectedModel(settings.model);
-    setByokKey(settings.byokKey);
-    setTopK(settings.topK);
-    setEnableWebSearch(settings.enableWebSearch);
-  }, [settings, isOpen]);
-
-  if (!isOpen) return null;
 
   const handleSave = () => {
     onSave({
@@ -93,139 +83,167 @@ export default function SettingsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
       <div
-        className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-white/[0.12] bg-[#090a0f] text-gray-100 shadow-2xl shadow-black/80"
+        className="relative w-full max-w-xl overflow-hidden rounded-[var(--radius-xl)] border border-[var(--hairline)] bg-[var(--surface-1)] text-[var(--ink)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-white/[0.08] px-6 py-4.5 bg-white/[0.02]">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10 text-indigo-400">
-              <Sliders className="h-4.5 w-4.5" />
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-[var(--hairline)] px-6 py-4 bg-[var(--surface-2)]">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] bg-[var(--accent-muted)] border border-[var(--accent)]/20 text-[var(--accent)]">
+              <Sliders className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-white">System & Model Configuration</h2>
-              <p className="text-xs text-gray-400">Customize LLM routing, ephemeral BYOK keys, and retrieval bounds</p>
+              <h2 className="text-sm font-semibold text-[var(--ink)] tracking-[-0.01em]">Inference & Model Settings</h2>
+              <p className="text-[11px] text-[var(--ink-subtle)]">
+                Configure primary LLM provider, BYOK credentials, and retrieval depth
+              </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-400 hover:bg-white/[0.06] hover:text-white transition-colors"
+            className="rounded p-1 text-[var(--ink-tertiary)] hover:text-[var(--ink)] transition-colors"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Modal Body */}
-        <div className="max-h-[75vh] overflow-y-auto p-6 space-y-6">
-          {/* 1. LLM Model Selection */}
+        {/* Body */}
+        <div className="max-h-[75vh] overflow-y-auto p-6 space-y-6 text-xs">
+          {/* Section 1: Model Selection */}
           <div className="space-y-3">
-            <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
-              <Cpu className="h-3.5 w-3.5 text-indigo-400" />
-              Active Generation Model
-            </label>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-[var(--ink)] flex items-center gap-1.5">
+                <Cpu className="h-3.5 w-3.5 text-[var(--accent)]" />
+                Select Language Model
+              </label>
+              <span className="text-[11px] text-[var(--ink-tertiary)] font-mono">OpenRouter Gateway</span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5">
               {AVAILABLE_MODELS.map((m) => {
                 const isSelected = selectedModel === m.id;
                 return (
                   <div
                     key={m.id}
                     onClick={() => setSelectedModel(m.id)}
-                    className={`relative cursor-pointer rounded-xl border p-3.5 transition-all ${
+                    className={`cursor-pointer rounded-[var(--radius-lg)] border p-3 transition-all ${
                       isSelected
-                        ? "border-indigo-500 bg-indigo-500/[0.08] ring-1 ring-indigo-500/50 shadow-md shadow-indigo-500/10"
-                        : "border-white/[0.08] bg-white/[0.02] hover:border-white/[0.18] hover:bg-white/[0.04]"
+                        ? "border-[var(--accent)] bg-[var(--accent-subtle)]"
+                        : "border-[var(--hairline)] bg-[var(--canvas)] hover:border-[var(--hairline-strong)] hover:bg-[var(--surface-2)]"
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-white">{m.name}</span>
-                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${m.badgeColor}`}>
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`h-2 w-2 rounded-full transition-colors ${
+                            isSelected ? "bg-[var(--accent)]" : "bg-[var(--ink-tertiary)]"
+                          }`}
+                        />
+                        <span className="font-semibold text-[var(--ink)] text-xs">{m.name}</span>
+                        <span className="text-[10px] text-[var(--ink-tertiary)] font-mono">({m.provider})</span>
+                      </div>
+                      <span className={`rounded-[var(--radius-sm)] border px-2 py-0.5 text-[10px] font-mono ${
+                        isSelected
+                          ? "border-[var(--accent)]/30 bg-[var(--accent-muted)] text-[var(--accent)]"
+                          : "border-[var(--hairline)] bg-[var(--surface-2)] text-[var(--ink-subtle)]"
+                      }`}>
                         {m.badge}
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-gray-400 line-clamp-2 leading-relaxed">{m.desc}</p>
-                    <span className="mt-2 block text-[10px] text-gray-400 font-mono">{m.provider}</span>
+                    <p className="mt-1 text-[11px] text-[var(--ink-subtle)] pl-4">{m.desc}</p>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* 2. BYOK Key Configuration */}
-          <div className="space-y-3">
+          {/* Section 2: BYOK (Bring Your Own Key) */}
+          <div className="space-y-2 border-t border-[var(--hairline)] pt-5">
             <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
-                <Key className="h-3.5 w-3.5 text-amber-400" />
-                OpenRouter BYOK (Bring Your Own Key)
+              <label className="text-xs font-semibold text-[var(--ink)] flex items-center gap-1.5">
+                <Key className="h-3.5 w-3.5 text-[var(--accent)]" />
+                Bring Your Own Key (BYOK)
               </label>
-              {byokKey && (
-                <button
-                  type="button"
-                  onClick={handleClearKey}
-                  className="text-[11px] text-rose-400 hover:text-rose-300 transition-colors"
-                >
-                  Clear Key
-                </button>
-              )}
+              <span className="text-[10px] font-mono text-[var(--ink-tertiary)]">Ephemeral Session</span>
             </div>
-            <div className="relative">
+            <p className="text-[11px] text-[var(--ink-subtle)] leading-relaxed">
+              Supply an OpenRouter API key (<code className="text-[var(--ink-muted)]">sk-or-v1-...</code>) to use your own quota.
+              Held in browser memory only and passed via headers. Zero database persistence.
+            </p>
+
+            <div className="relative mt-2 flex items-center">
               <input
                 type={showKey ? "text" : "password"}
                 value={byokKey}
                 onChange={(e) => setByokKey(e.target.value)}
-                placeholder="sk-or-v1-xxxxxxxxxxxxxxxx (Leave blank to use server default)"
-                className="w-full rounded-xl border border-white/[0.1] bg-black/40 px-3.5 py-2.5 pr-20 text-xs text-white placeholder-gray-400 font-mono focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/50"
+                placeholder="sk-or-v1-xxxxxxxxxxxxxxxx..."
+                className="w-full rounded-[var(--radius-md)] border border-[var(--hairline)] bg-[var(--canvas)] px-3 py-2 pr-20 text-xs font-mono text-[var(--ink)] placeholder-[var(--ink-tertiary)] focus:border-[var(--accent)]/50 focus:outline-none transition-colors"
               />
-              <button
-                type="button"
-                onClick={() => setShowKey(!showKey)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 hover:text-white transition-colors"
-              >
-                {showKey ? "Hide" : "Show"}
-              </button>
+              <div className="absolute right-2 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowKey(!showKey)}
+                  className="rounded px-1.5 py-0.5 text-[10px] text-[var(--ink-subtle)] hover:text-[var(--ink)]"
+                >
+                  {showKey ? "Hide" : "Show"}
+                </button>
+                {byokKey && (
+                  <button
+                    type="button"
+                    onClick={handleClearKey}
+                    className="rounded px-1.5 py-0.5 text-[10px] text-red-400 hover:text-red-300"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2 text-[11px] text-gray-400">
-              <Shield className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-              <span>
-                <strong>Ephemeral Security:</strong> Your key is stored in your browser session only. It is passed via
-                headers and strictly scrubbed from server logs and traces.
-              </span>
+
+            <div className="mt-2 flex items-center gap-2 text-[11px] text-[var(--ink-tertiary)]">
+              <Shield className="h-3.5 w-3.5 text-[var(--accent)]" />
+              <span>If left blank, the platform defaults to server-configured open-weight models.</span>
             </div>
           </div>
 
-          {/* 3. Retrieval Parameters */}
-          <div className="space-y-3 pt-2 border-t border-white/[0.08]">
+          {/* Section 3: Retrieval Depth (Top-K) */}
+          <div className="space-y-2 border-t border-[var(--hairline)] pt-5">
             <div className="flex items-center justify-between">
-              <div>
-                <label className="text-xs font-semibold text-gray-200">Cross-Encoder Top-K Candidates</label>
-                <p className="text-[11px] text-gray-400">Number of reranked chunks injected into grounded context</p>
-              </div>
-              <span className="rounded-md border border-white/[0.1] bg-white/[0.04] px-2.5 py-1 text-xs font-mono font-bold text-indigo-300">
-                {topK} Chunks
-              </span>
+              <label className="text-xs font-semibold text-[var(--ink)] flex items-center gap-1.5">
+                <Sliders className="h-3.5 w-3.5 text-[var(--accent)]" />
+                Retrieval Depth (Top-K Candidates)
+              </label>
+              <span className="font-mono text-xs font-bold text-[var(--accent)]">{topK} chunks</span>
             </div>
+            <p className="text-[11px] text-[var(--ink-subtle)]">
+              Number of hybrid-retrieved and reranked chunks provided to the generator context window.
+            </p>
             <input
               type="range"
               min={2}
-              max={10}
-              step={1}
+              max={15}
               value={topK}
               onChange={(e) => setTopK(Number(e.target.value))}
-              className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+              className="w-full"
             />
+            <div className="flex justify-between text-[10px] text-[var(--ink-tertiary)] font-mono">
+              <span>2 (Fastest)</span>
+              <span>5 (Recommended)</span>
+              <span>15 (Deep Synthesis)</span>
+            </div>
           </div>
 
-          {/* 4. External Web Search Toggle */}
-          <div className="flex items-center justify-between pt-2 border-t border-white/[0.08]">
-            <div className="flex items-center gap-2.5">
-              <div className="rounded-lg border border-teal-500/30 bg-teal-500/10 p-1.5 text-teal-400">
-                <Globe className="h-4 w-4" />
-              </div>
-              <div>
-                <span className="text-xs font-semibold text-gray-200">Autonomous Web Search Tool</span>
-                <p className="text-[11px] text-gray-400">Allow agent to search public web when private docs lack answers</p>
-              </div>
+          {/* Section 4: Web Search Toggle */}
+          <div className="flex items-center justify-between rounded-[var(--radius-lg)] border border-[var(--hairline)] bg-[var(--canvas)] p-3.5">
+            <div className="space-y-0.5">
+              <span className="text-xs font-semibold text-[var(--ink)] flex items-center gap-1.5">
+                <Globe className="h-3.5 w-3.5 text-[var(--accent)]" />
+                Augment with Web Search
+              </span>
+              <p className="text-[11px] text-[var(--ink-subtle)]">
+                Fallback to live search when query relevance falls below confidence threshold
+              </p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -234,37 +252,52 @@ export default function SettingsModal({
                 onChange={(e) => setEnableWebSearch(e.target.checked)}
                 className="sr-only peer"
               />
-              <div className="w-10 h-5 bg-gray-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+              <div className="w-9 h-5 bg-[var(--surface-3)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--ink-subtle)] after:border-[var(--hairline)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--accent)] peer-checked:after:bg-white peer-checked:after:border-white"></div>
             </label>
           </div>
         </div>
 
-        {/* Modal Footer */}
-        <div className="flex items-center justify-end gap-3 border-t border-white/[0.08] px-6 py-4 bg-white/[0.02]">
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-[var(--hairline)] px-6 py-4 bg-[var(--surface-2)]">
           <button
-            type="button"
             onClick={onClose}
-            className="rounded-xl border border-white/[0.1] bg-white/[0.04] px-4 py-2 text-xs font-medium text-gray-300 hover:bg-white/[0.08] hover:text-white transition-colors"
+            className="rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--ink-subtle)] hover:text-[var(--ink)] transition-colors"
           >
             Cancel
           </button>
           <button
-            type="button"
             onClick={handleSave}
-            disabled={isSaved}
-            className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2 text-xs font-medium text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 transition-all"
+            className="btn-primary"
           >
             {isSaved ? (
               <>
-                <Check className="h-4 w-4" />
-                Saved!
+                <Check className="h-3.5 w-3.5 text-emerald-300" />
+                <span>Saved</span>
               </>
             ) : (
-              "Save Changes"
+              <span>Save Preferences</span>
             )}
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SettingsModal({
+  isOpen,
+  onClose,
+  settings,
+  onSave,
+}: SettingsModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <SettingsModalContent
+      key={`${settings.model}-${settings.topK}-${settings.enableWebSearch}`}
+      onClose={onClose}
+      settings={settings}
+      onSave={onSave}
+    />
   );
 }

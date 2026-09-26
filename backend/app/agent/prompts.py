@@ -39,9 +39,12 @@ Return ONLY a valid JSON object in this format:
 QUERY_REWRITE_PROMPT = """You are an expert query rewriter for semantic search and retrieval.
 The initial search query failed to retrieve sufficient relevant information from the store.
 
-Original Query: {query}
+{history_context}Original Query: {query}
 
-Reformulate this query to improve search recall and semantic vector matching.
+Reformulate this query into a standalone search query to improve search recall and
+semantic vector matching.
+- Resolve any pronouns ("it", "they", "that", "the former", "the latter") using the
+  conversation context if provided.
 - Expand acronyms or implicit terms.
 - Focus on the core semantic intent.
 - Do NOT add extraneous commentary.
