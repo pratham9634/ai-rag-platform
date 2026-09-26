@@ -732,5 +732,82 @@ A:
    - Exposes in-memory thread-safe operational metrics: uptime, total queries, error rates, and P50/P90/P99 latency percentiles.
    - Cloud monitoring tools scrape this endpoint to trigger automated alerts when P99 exceeds SLA boundaries (e.g. > 5.0 seconds).
 
+--------------------------------------------------------------------------------
+
+Q61 [CI/CD PIPELINES & GITHUB ACTIONS ARCHITECTURE]: How do you design an enterprise CI/CD pipeline for a multi-tenant AI system, why should Docker builds be validated in PR checks, and how does GitHub Actions layer caching (type=gha) work?
+A:
+1. Multi-Stage Shift-Left Pipeline Architecture:
+   - Stage 1 (Parallel Linters & Typecheck): Ruff linter/formatter check and MyPy strict type validation in backend; ESLint and `npx tsc --noEmit` in frontend. Fails fast in < 15 seconds.
+   - Stage 2 (Unit & Integration Testing): Pytest runs 83+ hermetic unit and mock integration tests with isolated test settings (`ENVIRONMENT=test`).
+   - Stage 3 (Secret Leak Scan): Git audit scans tracked files to ensure no `.env`, `.pem`, or credentials leaked into the commit tree.
+   - Stage 4 (Container Build Verification): Builds multi-stage `Dockerfile.prod` for both backend and frontend.
+2. Why Validate Docker Builds in Pull Requests:
+   - Host runners have pre-installed system tools, C libraries, and Python headers. A test suite that passes on Ubuntu host runner can fail inside a minimal Alpine or Debian Slim container if a dynamic C-extension (e.g., PyMuPDF or asyncpg) lacks runtime shared libraries.
+   - Validating container builds inside CI guarantees that the merged artifact is 100% buildable and deployable before touching `main`.
+3. GitHub Actions Docker Layer Caching (`type=gha`):
+   - Without caching, every CI run re-downloads base images, re-compiles Python wheels, and re-runs `npm ci`, wasting 8–10 minutes per build.
+   - Docker Buildx exports intermediate filesystem layers to the GitHub Actions Cache API (`cache-to: type=gha,mode=max`).
+   - Subsequent PRs pull unchanged layers directly (`cache-from: type=gha`), cutting container build verification times to < 90 seconds.
+
+--------------------------------------------------------------------------------
+
+Q62 [CLOUD DEPLOYMENT TOPOLOGY: VERCEL + RENDER/RAILWAY + SUPABASE + UPSTASH]: How does the platform achieve high availability and scalability using a 100% free/low-cost tier architecture, and why is separating the interactive API from the background ingestion worker mandatory?
+A:
+1. Component Responsibility Separation:
+   - Frontend (Vercel): Global Edge CDN caching, instant SSR rendering for Next.js, and zero server maintenance.
+   - Backend API (Render / Railway): Handles synchronous HTTP requests and unidirectional SSE streams. Autoscales on web concurrency.
+   - Background Ingestion Worker (Render Background Service): Handles CPU-bound PDF parsing and text chunking via `python -m app.workers.main`.
+   - Database & Vector (Supabase): Managed PostgreSQL 15, `pgvector`, and private object storage with automated backups.
+   - Queue & Cache (Upstash Redis): Serverless low-latency in-memory queue with TLS (`rediss://`) for rate limiting and deduplication.
+2. The Critical Architectural Requirement of Separating Web and Worker:
+   - Parsing multi-page PDFs with PyMuPDF and computing embeddings is CPU-bound. If executed on the API server's ASGI event loop, CPU saturation freezes incoming HTTP handshakes, health probes, and active SSE token streams for all tenants.
+   - Decoupled worker architecture isolates CPU load entirely, allowing the web API to maintain sub-50ms latency regardless of background upload volume.
+
+--------------------------------------------------------------------------------
+
+Q63 [CONNECTION POOLING AT SCALE: SUPAVISOR / PGBOUNCER (PORT 6543 VS 5432)]: Why does direct connection to PostgreSQL port 5432 cause connection pool exhaustion in serverless/containerized deployments, and how does transaction pooling on port 6543 solve this?
+A:
+1. The Connection Starvation Trap on Port 5432 (Session Mode):
+   - Traditional PostgreSQL allocates ~10MB RAM per connected backend process and enforces strict `max_connections` limits (typically 20 on free tier, 100 on standard tier).
+   - In containerized deployments with multiple Uvicorn workers and autoscaling instances, each worker maintains its own local SQLAlchemy connection pool.
+   - 4 instances × 4 workers × 5 connections = 80 connections, instantly triggering `FATAL: remaining connection slots are reserved for non-replication superuser connections`.
+2. Supavisor Transaction-Level Multiplexing (Port 6543):
+   - Supavisor sits as a high-performance proxy in front of PostgreSQL.
+   - Clients connect via port 6543. Instead of holding a dedicated PostgreSQL backend process for the entire lifecycle of a client connection, Supavisor assigns a physical database connection ONLY for the duration of an active SQL transaction block (`BEGIN ... COMMIT`).
+   - The moment a query commits, the physical connection returns to the shared pool.
+   - This enables hundreds of concurrent API requests and worker jobs to multiplex over just 10–15 physical database connections with zero degradation.
+
+--------------------------------------------------------------------------------
+
+Q64 [DEPLOYMENT STRATEGIES: BLUE/GREEN VS CANARY VS ROLLING UPDATES]: Compare Blue/Green, Canary, and Rolling deployment strategies for a RAG platform, and explain how readiness probes (/health/ready) and graceful worker draining prevent dropped chat streams during updates.
+A:
+1. Deployment Strategy Comparison:
+   - Blue/Green: Spins up a completely identical second environment (Green), tests it, and flips the load balancer router instantly. Pros: Instant rollback. Cons: Doubles infrastructure cost (unsuitable for free/low-cost tier).
+   - Canary: Routes a small percentage of real user traffic (e.g. 5%) to the new version, monitors error rates, then rolls out 100%. Pros: Real-world blast radius limitation. Cons: Requires complex service mesh or advanced ingress controllers.
+   - Rolling Update (Selected Approach): Replaces old container replicas one-by-one with new replicas. Zero extra infrastructure cost, native to Render/Railway/Docker Swarm.
+2. Zero-Downtime Traffic Switching via Readiness Probes:
+   - The load balancer polls `/health/ready`.
+   - New containers are started in parallel; traffic is withheld until database connection pools and warmups succeed (`status: "ready"`).
+   - Once ready, new requests route to the new container.
+3. Graceful Draining of Interactive Streams & Workers:
+   - Old web containers receive `SIGTERM`. They stop accepting new connections but allow active SSE streams to finish before terminating.
+   - Workers catch `SIGTERM`, finish committing active document chunks, cancel the TTL cleanup daemon, and exit without leaving documents stranded in `PROCESSING` state.
+
+--------------------------------------------------------------------------------
+
+Q65 [SECRET MANAGEMENT & ENVIRONMENT DRIFT ACROSS DEV, CI, AND PROD]: How do you manage secrets (Clerk, Supabase, LangSmith, BYOK) across local development, GitHub Actions CI, and production cloud providers without leaking keys in Git, Docker layers, or client bundles?
+A:
+1. Three-Tier Secret Partitioning:
+   - Local Development: Local `.env` file explicitly listed in `.gitignore`. Verified by automated CI security scans (`git ls-files` check).
+   - CI/CD Environment: GitHub Actions uses synthetic/mock environment variables (`ENVIRONMENT=test`, dummy URLs and test keys) for hermetic testing. No production credentials touch CI runners.
+   - Production Cloud: Secrets (`CLERK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`) are injected exclusively via cloud provider environment settings (Render Secret Groups / Vercel Environment Variables).
+2. Preventing Secret Leakage in Docker Images:
+   - Secrets are NEVER passed as `ARG` or copied via `.env` files into Dockerfiles.
+   - Multi-stage Docker builds discard build artifacts and compile only application source code, expecting runtime environment variables to be injected when the container spins up.
+3. Client vs. Server Key Separation:
+   - Next.js strictly requires the `NEXT_PUBLIC_` prefix for client-accessible variables (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`).
+   - Server-only secrets (`CLERK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENROUTER_API_KEY`) lack this prefix and are physically stripped from client JavaScript bundles during compilation.
+   - In-memory BYOK OpenRouter keys sent by users are scrubbed by `SensitiveDataFilter` from all application logs and LangSmith trace trees.
+
 
 

@@ -39,6 +39,14 @@ async def main() -> None:
         logger.error("FATAL: DATABASE_URL is not configured. Worker cannot start.")
         sys.exit(1)
 
+    from app.services.redis_client import check_redis_health
+
+    redis_healthy = await check_redis_health()
+    if redis_healthy:
+        logger.info("Redis connectivity confirmed healthy.")
+    else:
+        logger.info("Redis not responding or unconfigured; running in standalone mode.")
+
     stop_event = asyncio.Event()
 
     # Register OS termination signals
