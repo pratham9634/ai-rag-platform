@@ -135,11 +135,12 @@ class AgentWorkflow:
         query = state.get("rewritten_query") or state.get("query", "")
         api_key = state.get("api_key_override")
 
+        k_val = state.get("top_k") or 5
         results = await self.retrieval.hybrid_search(
             db=self.db,
             tenant_id=tenant_id,
             query=query,
-            top_k=5,
+            top_k=k_val,
             api_key_override=api_key,
         )
 
@@ -260,8 +261,10 @@ class AgentWorkflow:
             {"role": "user", "content": query},
         ]
 
+        model = state.get("model_override")
         generation = await self.llm.generate_response(
             messages=messages,
+            model=model,
             temperature=0.1,
             api_key_override=api_key,
         )
@@ -284,8 +287,10 @@ class AgentWorkflow:
             {"role": "user", "content": query},
         ]
 
+        model = state.get("model_override")
         generation = await self.llm.generate_response(
             messages=messages,
+            model=model,
             temperature=0.3,
             api_key_override=api_key,
         )
@@ -297,6 +302,8 @@ class AgentWorkflow:
         tenant_id: str,
         query: str,
         api_key_override: str | None = None,
+        model_override: str | None = None,
+        top_k: int | None = None,
     ) -> AgentState:
         """Execute full agent graph and return final state."""
         initial_state: AgentState = {
@@ -312,6 +319,8 @@ class AgentWorkflow:
             "generation": "",
             "error": None,
             "api_key_override": api_key_override,
+            "model_override": model_override,
+            "top_k": top_k,
         }
 
         run_config = get_tracer_run_config(

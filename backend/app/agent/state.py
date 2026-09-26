@@ -33,3 +33,5 @@ class AgentState(TypedDict, total=False):
 
     # User BYOK override if supplied
     api_key_override: str | None
+    model_override: str | None
+    top_k: int | None

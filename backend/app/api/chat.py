@@ -75,6 +75,9 @@ class ChatQueryRequest(BaseModel):
 
     conversation_id: str | None = None
     query: str = Field(..., min_length=1, max_length=4000)
+    model: str | None = None
+    top_k: int | None = None
+    enable_web_search: bool | None = None
 
 
 class ChatQueryResponse(BaseModel):
@@ -216,6 +219,10 @@ async def chat_query(
         str | None,
         Header(alias="X-OpenRouter-API-Key", description="Optional BYOK OpenRouter API key"),
     ] = None,
+    x_byok_api_key: Annotated[
+        str | None,
+        Header(alias="X-BYOK-API-Key", description="Optional BYOK OpenRouter API key from UI"),
+    ] = None,
 ) -> Any:
     """
     Execute full agentic RAG workflow:
@@ -274,12 +281,16 @@ async def chat_query(
     )
     db.add(user_msg)
 
+    effective_api_key = x_byok_api_key or x_openrouter_api_key
+
     # 3. Run Agent Workflow
     workflow = AgentWorkflow(db=db)
     final_state = await workflow.run(
         tenant_id=tenant_id,
         query=payload.query,
-        api_key_override=x_openrouter_api_key,
+        api_key_override=effective_api_key,
+        model_override=payload.model,
+        top_k=payload.top_k,
     )
 
     answer = final_state.get("generation", "No response generated.")
@@ -321,6 +332,10 @@ async def chat_stream(
         str | None,
         Header(alias="X-OpenRouter-API-Key"),
     ] = None,
+    x_byok_api_key: Annotated[
+        str | None,
+        Header(alias="X-BYOK-API-Key"),
+    ] = None,
 ) -> StreamingResponse:
     """
     Stream tokens in real-time using Server-Sent Events (SSE).
@@ -351,12 +366,16 @@ async def chat_stream(
             }
             yield f"data: {json.dumps(status_retrieval)}\n\n"
 
+            effective_api_key = x_byok_api_key or x_openrouter_api_key
+
             # 3. Execute LangGraph agentic workflow
             workflow = AgentWorkflow(db=db)
             final_state = await workflow.run(
                 tenant_id=tenant_id,
                 query=payload.query,
-                api_key_override=x_openrouter_api_key,
+                api_key_override=effective_api_key,
+                model_override=payload.model,
+                top_k=payload.top_k,
             )
 
             answer = final_state.get("generation", "")
