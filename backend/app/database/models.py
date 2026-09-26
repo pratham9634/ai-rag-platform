@@ -11,7 +11,9 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -203,7 +205,8 @@ class Conversation(Base):
     """
     Multi-tenant chat conversation thread.
 
-    Groups multi-turn messages and preserves context under a specific tenant.
+    Groups multi-turn messages, maintains running conversation summaries,
+    and isolates context under verified tenant_id and user_id.
     """
 
     __tablename__ = "conversations"
@@ -219,10 +222,28 @@ class Conversation(Base):
         index=True,
         doc="Organization ID derived server-side from JWT claims",
     )
+    user_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="unknown_user",
+        index=True,
+        doc="Authenticated user ID derived server-side from JWT claims",
+    )
     title: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
         default="New Conversation",
+    )
+    summary: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Compact running summary of past conversation turns",
+    )
+    summary_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        doc="Monotonically increasing summary version counter",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -243,14 +264,18 @@ class Conversation(Base):
         order_by="Message.created_at",
     )
 
-    __table_args__ = (Index("ix_conversations_tenant_updated", "tenant_id", "updated_at"),)
+    __table_args__ = (
+        Index("ix_conversations_tenant_updated", "tenant_id", "updated_at"),
+        Index("ix_conversations_user_updated", "user_id", "updated_at"),
+        Index("ix_conversations_tenant_user", "tenant_id", "user_id"),
+    )
 
 
 class Message(Base):
     """
     A single turn within a multi-tenant conversation thread.
 
-    Stores role (user/assistant), message text, and grounded citations list.
+    Stores role (user/assistant), message text, token count, and grounded citations list.
     """
 
     __tablename__ = "messages"
@@ -271,6 +296,13 @@ class Message(Base):
         nullable=False,
         index=True,
         doc="Denormalized tenant_id for high-speed tenant-filtered message queries",
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="unknown_user",
+        index=True,
+        doc="Authenticated user ID derived server-side from JWT claims",
     )
     role: Mapped[str] = mapped_column(
         String(50),
@@ -305,4 +337,102 @@ class Message(Base):
     __table_args__ = (
         Index("ix_messages_tenant_conv", "tenant_id", "conversation_id"),
         Index("ix_messages_tenant_created", "tenant_id", "created_at"),
+        Index("ix_messages_user_conv", "user_id", "conversation_id"),
+    )
+
+
+class UserMemory(Base):
+    """
+    Long-term persistent user memory and semantic historical knowledge.
+
+    Stores durable user facts, preferences, goals, projects, constraints,
+    and decisions with dense vector embeddings for semantic retrieval.
+    """
+
+    __tablename__ = "user_memories"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+        doc="Tenant isolation ID",
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+        doc="Authenticated user ID",
+    )
+    memory_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        doc="Type: preference, project, goal, constraint, decision, fact",
+    )
+    content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        doc="Distilled declarative memory statement",
+    )
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(1536),
+        nullable=True,
+        doc="1536-dimensional dense embedding for semantic similarity search",
+    )
+    importance: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.5,
+        doc="Memory importance score from 0.0 to 1.0",
+    )
+    confidence: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=1.0,
+        doc="Extraction confidence score from 0.0 to 1.0",
+    )
+    source_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+        doc="Originating conversation ID",
+    )
+    source_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+        doc="Originating message ID",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        index=True,
+        doc="False if superseded or invalidated by newer memory",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_user_memories_user_active", "user_id", "is_active"),
+        Index("ix_user_memories_tenant_user_active", "tenant_id", "user_id", "is_active"),
+        Index("ix_user_memories_type", "user_id", "memory_type"),
+        Index(
+            "ix_user_memories_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )

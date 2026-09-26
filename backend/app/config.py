@@ -65,6 +65,40 @@ class Settings(BaseSettings):
         description="Redis connection URL",
     )
 
+    # ---------- Persistent Memory & Context Manager ----------
+    max_recent_messages: int = Field(
+        default=10,
+        description="Number of recent messages to inject into context",
+    )
+    summary_message_threshold: int = Field(
+        default=20,
+        description="Trigger summarization when message threshold is reached",
+    )
+    max_memory_results: int = Field(
+        default=5,
+        description="Maximum semantic long-term user memories retrieved",
+    )
+    max_history_results: int = Field(
+        default=5,
+        description="Maximum relevant historical conversation turns retrieved",
+    )
+    max_rag_results: int = Field(
+        default=5,
+        description="Maximum RAG document chunks retrieved",
+    )
+    max_context_tokens: int = Field(
+        default=6000,
+        description="Maximum tokens allowed across all compiled context blocks",
+    )
+    memory_similarity_threshold: float = Field(
+        default=0.60,
+        description="Minimum cosine similarity for memory retrieval",
+    )
+    memory_dedup_threshold: float = Field(
+        default=0.85,
+        description="Cosine similarity threshold for superseding existing memories",
+    )
+
     # ---------- OpenRouter ----------
     openrouter_api_key: str = Field(
         default="",

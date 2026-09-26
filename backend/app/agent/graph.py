@@ -268,7 +268,9 @@ class AgentWorkflow:
             context_blocks.append(f"{chunk_header}\n{clean_content}\n</chunk>")
         formatted_context = "\n\n".join(context_blocks)
 
-        system_msg = GENERATOR_SYSTEM_PROMPT.format(context=formatted_context)
+        memory_ctx = state.get("memory_context", "")
+        memory_section = f"\n\n{memory_ctx}\n" if memory_ctx else ""
+        system_msg = GENERATOR_SYSTEM_PROMPT.format(context=formatted_context) + memory_section
         messages: list[dict[str, str]] = [{"role": "system", "content": system_msg}]
 
         # Inject recent multi-turn conversation memory (last 6 messages = ~3 full turns)
@@ -296,6 +298,13 @@ class AgentWorkflow:
         query = state.get("query", "")
         api_key = state.get("api_key_override")
         chat_history = state.get("chat_history", [])
+        memory_ctx = state.get("memory_context", "")
+
+        memory_ref = (
+            f"\n\nPersistent User Memory Context (Reference Only):\n{memory_ctx}\n"
+            if memory_ctx
+            else ""
+        )
 
         messages: list[dict[str, str]] = [
             {
@@ -303,6 +312,7 @@ class AgentWorkflow:
                 "content": (
                     "You are the Enterprise RAG Assistant. Respond politely and concisely. "
                     "Offer to answer questions regarding corporate documentation and data."
+                    f"{memory_ref}"
                 ),
             }
         ]
@@ -330,14 +340,17 @@ class AgentWorkflow:
         self,
         tenant_id: str,
         query: str,
+        user_id: str = "unknown_user",
         api_key_override: str | None = None,
         model_override: str | None = None,
         top_k: int | None = None,
         chat_history: list[dict[str, str]] | None = None,
+        memory_context: str | None = None,
     ) -> AgentState:
         """Execute full agent graph and return final state."""
         initial_state: AgentState = {
             "tenant_id": tenant_id,
+            "user_id": user_id,
             "query": query,
             "rewritten_query": "",
             "documents": [],
@@ -349,6 +362,7 @@ class AgentWorkflow:
             "generation": "",
             "error": None,
             "chat_history": chat_history or [],
+            "memory_context": memory_context or "",
             "api_key_override": api_key_override,
             "model_override": model_override,
             "top_k": top_k,
