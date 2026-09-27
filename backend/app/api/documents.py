@@ -515,7 +515,18 @@ async def upload_document(
     db.add(document)
     await db.commit()
 
-    # 6. Dispatch asynchronous background worker (Celery broker with in-process fallback)
+    # 6. Persist file bytes to object storage for Celery worker consumption
+    storage_service = StorageService()
+    try:
+        await storage_service.upload_file_bytes(
+            storage_path=storage_path,
+            content=content,
+            content_type=file.content_type or "application/pdf",
+        )
+    except Exception as exc:
+        logger.warning("Object storage upload failed (%s); proceeding with worker dispatch", exc)
+
+    # 7. Dispatch asynchronous background worker (Celery broker with in-process fallback)
     try:
         ingest_document_task.delay(
             document_id=str(doc_id),

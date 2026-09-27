@@ -119,6 +119,62 @@ class StorageService:
             "method": "PUT",
         }
 
+    async def upload_file_bytes(
+        self,
+        storage_path: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> bool:
+        """Upload raw file bytes directly to object storage."""
+        if self.backend == "s3" and settings.aws_access_key_id:
+            try:
+                import boto3
+
+                kwargs: dict[str, Any] = {
+                    "region_name": settings.aws_region,
+                    "aws_access_key_id": settings.aws_access_key_id,
+                    "aws_secret_access_key": settings.aws_secret_access_key,
+                }
+                if settings.s3_endpoint_url:
+                    kwargs["endpoint_url"] = settings.s3_endpoint_url
+                s3 = boto3.client("s3", **kwargs)
+                s3.put_object(
+                    Bucket=settings.s3_bucket_name or self.bucket,
+                    Key=storage_path,
+                    Body=content,
+                    ContentType=content_type,
+                )
+                return True
+            except Exception as e:
+                logger.error("Failed to upload to S3: %s", e)
+                raise
+
+        # Supabase Storage binary upload
+        if self.supabase_url and self.service_key:
+            endpoint = f"{self.supabase_url}/storage/v1/object/{self.bucket}/{storage_path}"
+            headers = {
+                "Authorization": f"Bearer {self.service_key}",
+                "apikey": self.service_key,
+                "Content-Type": content_type,
+                "x-upsert": "true",
+            }
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(endpoint, content=content, headers=headers)
+                    if resp.status_code in {200, 201}:
+                        logger.info("Uploaded %d bytes to Supabase storage at %s", len(content), storage_path)
+                        return True
+                    logger.error(
+                        "Supabase upload returned HTTP %d: %s", resp.status_code, resp.text
+                    )
+                    raise RuntimeError(f"Supabase upload failed: {resp.status_code} {resp.text}")
+            except Exception as e:
+                logger.error("Failed to upload to Supabase storage: %s", e)
+                raise
+
+        logger.info("Using local mock storage for %s (%d bytes)", storage_path, len(content))
+        return True
+
     async def download_file_bytes(self, storage_path: str) -> bytes:
         """Download raw file bytes from object storage."""
         if self.backend == "s3" and settings.aws_access_key_id:

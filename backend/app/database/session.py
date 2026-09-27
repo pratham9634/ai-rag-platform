@@ -7,6 +7,7 @@ Provides FastAPI dependency injection for database sessions.
 
 import logging
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -40,12 +41,22 @@ def get_async_database_url(url: str) -> str:
 # Create async engine with connection pooling
 async_db_url = get_async_database_url(settings.database_url)
 
+connect_args: dict[str, Any] = {}
+if "pooler.supabase.com" in async_db_url or ":6543" in async_db_url:
+    connect_args = {
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+        "prepared_statement_name_func": lambda: "",
+    }
+
 # Only create pool if URL is configured
 engine = (
     create_async_engine(
         async_db_url,
-        pool_size=10,
-        max_overflow=20,
+        connect_args=connect_args,
+        pool_size=5,
+        max_overflow=5,
+        pool_recycle=300,
         pool_pre_ping=True,
         echo=settings.environment == "development",
     )
