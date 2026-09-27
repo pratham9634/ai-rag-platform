@@ -11,6 +11,32 @@
 #   4. Render will deploy all services below from the `develop` branch
 
 services:
+  # ── 0. Frontend (Next.js / Staging) ──────────────────────────────────
+  - type: web
+    name: enterprise-rag-frontend-staging
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile.prod
+    dockerContext: ./frontend
+    branch: develop
+    plan: free
+    region: oregon
+    autoDeploy: true
+    buildArgs:
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false       # set in Render dashboard (your Clerk publishable key)
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://enterprise-rag-api-staging.onrender.com
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
+        value: /sign-in
+      - key: NEXT_PUBLIC_CLERK_SIGN_UP_URL
+        value: /sign-up
+      - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL
+        value: /dashboard
+      - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL
+        value: /dashboard
   # ── 1. Backend API (Staging) ─────────────────────────────────────────
   - type: web
     name: enterprise-rag-api-staging

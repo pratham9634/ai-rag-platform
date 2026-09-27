@@ -12,6 +12,34 @@
 #   Connect this GitHub repository to Render Blueprints (render.com).
 
 services:
+  # ── 0. Frontend (Next.js / Production) ───────────────────────────────
+  - type: web
+    name: enterprise-rag-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile.prod
+    dockerContext: ./frontend
+    branch: main
+    plan: free
+    region: oregon
+    autoDeploy: true
+    buildArgs:
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://enterprise-rag-api.onrender.com
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
+        value: /sign-in
+      - key: NEXT_PUBLIC_CLERK_SIGN_UP_URL
+        value: /sign-up
+      - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL
+        value: /dashboard
+      - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL
+        value: /dashboard
+
+
   # ── 1. Backend Web Service (FastAPI) ──────────────────────────────────
   - type: web
     name: enterprise-rag-api
