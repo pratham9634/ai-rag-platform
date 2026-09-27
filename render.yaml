@@ -18,6 +18,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile.prod
     dockerContext: ./backend
+    branch: main             # ← production always deploys from main
     plan: free
     region: oregon
     healthCheckPath: /health/ready
@@ -58,6 +59,7 @@ services:
     dockerfilePath: ./backend/Dockerfile.prod
     dockerContext: ./backend
     dockerCommand: python -m app.workers.main
+    branch: main             # ← production always deploys from main
     plan: free
     region: oregon
     autoDeploy: true
