@@ -181,16 +181,20 @@ def ingest_document_task(
 
     Executes document ingestion with automatic retries and DLQ routing.
     """
-    doc_uuid = uuid.UUID(document_id)
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
+        doc_uuid = uuid.UUID(document_id)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
             future = asyncio.run_coroutine_threadsafe(
                 _execute_ingestion_pipeline(doc_uuid, tenant_id, storage_path, filename),
                 loop,
             )
             return future.result()
-        return loop.run_until_complete(
+        return asyncio.run(
             _execute_ingestion_pipeline(doc_uuid, tenant_id, storage_path, filename)
         )
     except Exception as exc:
