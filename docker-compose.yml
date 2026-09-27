@@ -62,9 +62,13 @@ services:
       - JINA_API_KEY=${JINA_API_KEY:-}
       - JINA_RERANKER_MODEL=${JINA_RERANKER_MODEL:-jina-reranker-v2-base-multilingual}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-supabase}
-      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
-      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
-      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-enterprise-rag}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-${LANGSMITH_TRACING:-false}}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-${LANGSMITH_API_KEY:-}}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-${LANGSMITH_PROJECT:-ai-rag-platform-dev}}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-${LANGCHAIN_TRACING_V2:-false}}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-${LANGCHAIN_API_KEY:-}}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-${LANGCHAIN_PROJECT:-ai-rag-platform-dev}}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
     volumes:
       - ./backend:/app
       - ./evaluation:/app/evaluation
@@ -125,8 +129,13 @@ services:
       - JINA_API_KEY=${JINA_API_KEY:-}
       - JINA_RERANKER_MODEL=${JINA_RERANKER_MODEL:-jina-reranker-v2-base-multilingual}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-supabase}
-      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
-      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-${LANGSMITH_TRACING:-false}}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-${LANGSMITH_API_KEY:-}}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-${LANGSMITH_PROJECT:-ai-rag-platform-dev}}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-${LANGCHAIN_TRACING_V2:-false}}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-${LANGCHAIN_API_KEY:-}}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-${LANGCHAIN_PROJECT:-ai-rag-platform-dev}}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
     volumes:
       - ./backend:/app
       - ./evaluation:/app/evaluation
