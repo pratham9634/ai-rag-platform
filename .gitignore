@@ -87,3 +87,8 @@ skills/
 decision.md
 decision*.md
 
+# Diagrams & Agent Skills
+docs/diagrams/
+skills-lock.json
+.agents/
+
