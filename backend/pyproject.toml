@@ -28,6 +28,10 @@ ignore = [
     "B008",  # Allow Depends/File in FastAPI parameter defaults
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["app", "evaluation"]
+
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S105"]  # Allow assert and mock tokens in test files
 
