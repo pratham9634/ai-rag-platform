@@ -21,9 +21,6 @@ services:
     plan: free
     region: oregon
     autoDeploy: true
-    buildArgs:
-      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
-        sync: false       # set in Render dashboard (your Clerk publishable key)
     envVars:
       - key: NEXT_PUBLIC_API_URL
         value: https://enterprise-rag-api-staging.onrender.com
