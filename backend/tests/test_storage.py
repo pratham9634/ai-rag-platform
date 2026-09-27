@@ -33,9 +33,10 @@ async def test_generate_upload_url_local_mock_fallback() -> None:
 @pytest.mark.asyncio
 async def test_supabase_signed_url_generation() -> None:
     """When Supabase credentials are present, queries Supabase REST API."""
-    with patch("app.config.settings.supabase_url", "https://xyz.supabase.co"), \
-         patch("app.config.settings.supabase_service_role_key", "secret-key"):
-
+    with (
+        patch("app.config.settings.supabase_url", "https://xyz.supabase.co"),
+        patch("app.config.settings.supabase_service_role_key", "secret-key"),
+    ):
         storage = StorageService()
         storage.supabase_url = "https://xyz.supabase.co"
         storage.service_key = "secret-key"
@@ -43,15 +44,18 @@ async def test_supabase_signed_url_generation() -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "url": "/storage/v1/object/upload/sign/documents/tenant-123/doc-1/file.pdf?token=abc123token",
-            "token": "abc123token",
+            "url": (
+                "/storage/v1/object/upload/sign/documents/"
+                "tenant-123/doc-1/file.pdf?token=mock_upload_token"
+            ),
+            "token": "mock_upload_token",
         }
 
         with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
             res = await storage.generate_upload_url("tenant-123", "doc-1", "file.pdf")
             assert res["storage_backend"] == "supabase"
             assert "https://xyz.supabase.co/storage/v1/object/upload/sign" in res["upload_url"]
-            assert res["token"] == "abc123token"
+            assert res["token"] == "mock_upload_token"
 
 
 @pytest.mark.asyncio

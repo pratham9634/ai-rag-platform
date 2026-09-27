@@ -8,6 +8,7 @@ requires-python = ">=3.11"
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+extend-exclude = ["evaluation"]
 
 [tool.ruff.lint]
 select = [
@@ -24,12 +25,11 @@ select = [
     "RUF",  # Ruff-specific rules
 ]
 ignore = [
-    "S101",  # Allow assert in tests
     "B008",  # Allow Depends/File in FastAPI parameter defaults
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101"]  # Allow assert in test files
+"tests/**/*.py" = ["S101", "S105"]  # Allow assert and mock tokens in test files
 
 # ── MyPy (Type Checker) ─────────────────────────────────────────────
 [tool.mypy]

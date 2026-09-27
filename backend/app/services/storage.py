@@ -162,7 +162,11 @@ class StorageService:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(endpoint, content=content, headers=headers)
                     if resp.status_code in {200, 201}:
-                        logger.info("Uploaded %d bytes to Supabase storage at %s", len(content), storage_path)
+                        logger.info(
+                            "Uploaded %d bytes to Supabase storage at %s",
+                            len(content),
+                            storage_path,
+                        )
                         return True
                     logger.error(
                         "Supabase upload returned HTTP %d: %s", resp.status_code, resp.text

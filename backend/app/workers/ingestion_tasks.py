@@ -194,9 +194,7 @@ def ingest_document_task(
                 loop,
             )
             return future.result()
-        return asyncio.run(
-            _execute_ingestion_pipeline(doc_uuid, tenant_id, storage_path, filename)
-        )
+        return asyncio.run(_execute_ingestion_pipeline(doc_uuid, tenant_id, storage_path, filename))
     except Exception as exc:
         logger.warning(
             "Celery task failed for document_id=%s (attempt %d/%d): %s",

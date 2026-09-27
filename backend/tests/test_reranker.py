@@ -36,8 +36,18 @@ def test_sync_rerank_preserves_top_k_order() -> None:
     query = "tenant isolation"
 
     candidates: list[dict[str, Any]] = [
-        {"id": "1", "document_id": "d1", "page_number": 1, "content": "Unrelated apples and oranges"},
-        {"id": "2", "document_id": "d2", "page_number": 2, "content": "Strict tenant isolation in multi-tenant RAG"},
+        {
+            "id": "1",
+            "document_id": "d1",
+            "page_number": 1,
+            "content": "Unrelated apples and oranges",
+        },
+        {
+            "id": "2",
+            "document_id": "d2",
+            "page_number": 2,
+            "content": "Strict tenant isolation in multi-tenant RAG",
+        },
     ]
 
     results = reranker.rerank(query=query, candidates=candidates, top_k=2)
@@ -54,8 +64,18 @@ async def test_jina_api_mocked_success() -> None:
     query = "financial revenue forecast"
 
     candidates = [
-        {"id": "chunk-1", "document_id": "doc-1", "page_number": 1, "content": "Q3 Revenue reached 50M."},
-        {"id": "chunk-2", "document_id": "doc-2", "page_number": 2, "content": "Holiday party schedule."},
+        {
+            "id": "chunk-1",
+            "document_id": "doc-1",
+            "page_number": 1,
+            "content": "Q3 Revenue reached 50M.",
+        },
+        {
+            "id": "chunk-2",
+            "document_id": "doc-2",
+            "page_number": 2,
+            "content": "Holiday party schedule.",
+        },
     ]
 
     mock_response = {
@@ -90,8 +110,18 @@ async def test_jina_api_network_error_triggers_fallback() -> None:
     query = "multi-tenant security"
 
     candidates = [
-        {"id": "chunk-sec", "document_id": "doc-1", "page_number": 1, "content": "Multi-tenant security measures."},
-        {"id": "chunk-food", "document_id": "doc-2", "page_number": 2, "content": "Pizza delivery menu."},
+        {
+            "id": "chunk-sec",
+            "document_id": "doc-1",
+            "page_number": 1,
+            "content": "Multi-tenant security measures.",
+        },
+        {
+            "id": "chunk-food",
+            "document_id": "doc-2",
+            "page_number": 2,
+            "content": "Pizza delivery menu.",
+        },
     ]
 
     with patch("httpx.AsyncClient.post", side_effect=httpx.ConnectError("Connection refused")):

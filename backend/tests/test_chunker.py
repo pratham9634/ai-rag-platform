@@ -114,7 +114,12 @@ def test_markdown_chunker_preserves_breadcrumbs() -> None:
 # ── Tabular Chunker Tests ────────────────────────────────────────────
 def test_tabular_chunker_prepends_column_headers() -> None:
     """TabularChunker must prepend table headers to every partitioned batch of rows."""
-    csv_text = "id,name,role,salary\n1,Alice,Engineer,120000\n2,Bob,Architect,160000\n3,Charlie,Product,130000"
+    csv_text = (
+        "id,name,role,salary\n"
+        "1,Alice,Engineer,120000\n"
+        "2,Bob,Architect,160000\n"
+        "3,Charlie,Product,130000"
+    )
     chunker = TabularChunker(chunk_size=40, chunk_overlap=0)
     chunks = chunker.chunk_page(csv_text, page_number=1)
 
@@ -148,9 +153,7 @@ def test_code_ast_chunker_splits_on_functions() -> None:
 def test_pdf_layout_chunker_filters_running_footers() -> None:
     """PDFLayoutChunker should filter out running footers like 'Page 1 of 5' and 'CONFIDENTIAL'."""
     pdf_text = (
-        "CONFIDENTIAL\n"
-        "Main section heading and content describing cloud architecture.\n"
-        "Page 1 of 5"
+        "CONFIDENTIAL\nMain section heading and content describing cloud architecture.\nPage 1 of 5"
     )
     chunker = PDFLayoutChunker(chunk_size=200, chunk_overlap=20)
     chunks = chunker.chunk_page(pdf_text, page_number=1)

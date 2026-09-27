@@ -132,6 +132,7 @@ async def test_end_to_end_agent_workflow(
     mock_db: AsyncMock, mock_llm: MagicMock, mock_retrieval: MagicMock
 ) -> None:
     """Full workflow completes and outputs generated answer with citations."""
+
     def dynamic_llm_response(*args: Any, **kwargs: Any) -> str:
         messages = kwargs.get("messages", [])
         system_content = messages[0].get("content", "") if messages else ""

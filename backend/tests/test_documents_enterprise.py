@@ -9,7 +9,7 @@ Tests:
 """
 
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,6 +45,7 @@ def test_user() -> AuthenticatedUser:
 
 def test_generate_upload_url_success(mock_db: AsyncMock, test_user: AuthenticatedUser) -> None:
     """POST /api/documents/upload-url should return signed URL and create PENDING record."""
+
     async def override_get_db() -> AsyncGenerator[AsyncMock, None]:
         yield mock_db
 
@@ -76,8 +77,11 @@ def test_generate_upload_url_success(mock_db: AsyncMock, test_user: Authenticate
     assert data["method"] == "PUT"
 
 
-def test_generate_upload_url_rejects_oversized_file(mock_db: AsyncMock, test_user: AuthenticatedUser) -> None:
+def test_generate_upload_url_rejects_oversized_file(
+    mock_db: AsyncMock, test_user: AuthenticatedUser
+) -> None:
     """POST /api/documents/upload-url should return 413 when file exceeds 10MB."""
+
     async def override_get_db() -> AsyncGenerator[AsyncMock, None]:
         yield mock_db
 
@@ -99,7 +103,9 @@ def test_generate_upload_url_rejects_oversized_file(mock_db: AsyncMock, test_use
     assert "exceeds maximum allowed limit" in resp.json()["detail"]
 
 
-def test_confirm_upload_triggers_celery_task(mock_db: AsyncMock, test_user: AuthenticatedUser) -> None:
+def test_confirm_upload_triggers_celery_task(
+    mock_db: AsyncMock, test_user: AuthenticatedUser
+) -> None:
     """POST /api/documents/confirm-upload should locate document and dispatch task."""
     doc_id = uuid.uuid4()
     mock_doc = Document(

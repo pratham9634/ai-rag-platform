@@ -14,6 +14,7 @@ from pathlib import Path
 
 import fitz
 import pytest
+
 from evaluation.generate_test_pdf import generate_handbook_pdf
 from evaluation.metrics import (
     check_admitted_ignorance,
@@ -147,7 +148,9 @@ def test_golden_dataset_schema_and_distribution() -> None:
         Path(__file__).parent.parent.parent / "evaluation" / "datasets" / "golden_dataset.json"
     )
     if not dataset_path.exists():
-        dataset_path = Path(__file__).parent.parent / "evaluation" / "datasets" / "golden_dataset.json"
+        dataset_path = (
+            Path(__file__).parent.parent / "evaluation" / "datasets" / "golden_dataset.json"
+        )
     if not dataset_path.exists():
         dataset_path = Path("evaluation/datasets/golden_dataset.json")
 
