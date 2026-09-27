@@ -1,0 +1,121 @@
+# ============================================
+# Enterprise RAG Platform — Render STAGING Blueprint
+# ============================================
+# Tracks the `develop` branch.
+# Deploy this separately from render.yaml (production).
+#
+# Usage:
+#   1. Go to render.com → New → Blueprint
+#   2. Connect your GitHub repo
+#   3. Select THIS FILE (render.staging.yaml) as the blueprint file
+#   4. Render will deploy all services below from the `develop` branch
+
+services:
+  # ── 0. Frontend (Next.js / Staging) ──────────────────────────────────
+  - type: web
+    name: enterprise-rag-frontend-staging
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile.prod
+    dockerContext: ./frontend
+    branch: develop
+    plan: free
+    region: oregon
+    autoDeploy: true
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://enterprise-rag-api-staging.onrender.com
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
+        value: /sign-in
+      - key: NEXT_PUBLIC_CLERK_SIGN_UP_URL
+        value: /sign-up
+      - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL
+        value: /dashboard
+      - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL
+        value: /dashboard
+  # ── 1. Backend API (Staging) ─────────────────────────────────────────
+  - type: web
+    name: enterprise-rag-api-staging
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile.prod
+    dockerContext: ./backend
+    branch: develop          # ← tracks develop branch
+    plan: free
+    region: oregon
+    healthCheckPath: /health/ready
+    autoDeploy: true         # auto-redeploys on every push to develop
+    envVars:
+      - key: ENVIRONMENT
+        value: staging
+      - key: LOG_LEVEL
+        value: DEBUG          # more verbose for staging
+      - key: BACKEND_CORS_ORIGINS
+        value: https://enterprise-rag-frontend-staging.onrender.com
+      - key: CLERK_SECRET_KEY
+        sync: false           # set manually in Render dashboard
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: documents-staging
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: enterprise-rag-redis-staging
+          property: connectionString
+      # LangSmith tracing ON in staging (helps debug issues before prod)
+      - key: LANGCHAIN_TRACING_V2
+        value: "true"
+      - key: LANGCHAIN_PROJECT
+        value: enterprise-rag-staging
+      - key: LANGCHAIN_API_KEY
+        sync: false
+      - key: LANGSMITH_API_KEY
+        sync: false
+
+  # ── 2. Background Worker (Staging) ───────────────────────────────────
+  - type: worker
+    name: enterprise-rag-worker-staging
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile.prod
+    dockerContext: ./backend
+    dockerCommand: python -m app.workers.main
+    branch: develop          # ← tracks develop branch
+    plan: free
+    region: oregon
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: staging
+      - key: LOG_LEVEL
+        value: DEBUG
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: documents-staging
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: enterprise-rag-redis-staging
+          property: connectionString
+      - key: LANGCHAIN_TRACING_V2
+        value: "true"
+      - key: LANGCHAIN_API_KEY
+        sync: false
+      - key: LANGSMITH_API_KEY
+        sync: false
+
+  # ── 3. Redis (Staging) ────────────────────────────────────────────────
+  - type: redis
+    name: enterprise-rag-redis-staging
+    plan: free
+    region: oregon
+    ipAllowList: []          # internal only

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import QueryProvider from "@/components/QueryProvider";
 
 /**
  * Using Inter font — clean, modern, widely used in SaaS products.
@@ -35,8 +36,10 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en" className={`${inter.variable} h-full antialiased`}>
-        <body className="min-h-full flex flex-col bg-gray-950 text-gray-100 font-[family-name:var(--font-inter)]">
-          {children}
+        <body className="min-h-full flex flex-col bg-[var(--canvas)] text-[var(--ink)] font-[family-name:var(--font-inter)]">
+          <QueryProvider>
+            {children}
+          </QueryProvider>
         </body>
       </html>
     </ClerkProvider>
