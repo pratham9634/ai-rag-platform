@@ -146,6 +146,11 @@ def test_golden_dataset_schema_and_distribution() -> None:
     dataset_path = (
         Path(__file__).parent.parent.parent / "evaluation" / "datasets" / "golden_dataset.json"
     )
+    if not dataset_path.exists():
+        dataset_path = Path(__file__).parent.parent / "evaluation" / "datasets" / "golden_dataset.json"
+    if not dataset_path.exists():
+        dataset_path = Path("evaluation/datasets/golden_dataset.json")
+
     assert dataset_path.exists()
 
     with open(dataset_path, encoding="utf-8") as f:

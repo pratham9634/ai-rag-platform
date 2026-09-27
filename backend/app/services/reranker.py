@@ -1,17 +1,24 @@
 """
-Cross-Encoder Relevance Reranker.
+Cross-Encoder Neural Relevance Reranker.
 
-Reranks candidate chunks retrieved from hybrid search to extract the highest-quality
-top-k context chunks for the LLM.
+Leverages Jina AI's multilingual neural cross-encoder (jina-reranker-v2-base-multilingual)
+supporting up to 8,192 candidate tokens with seamless local fallback to lexical cross-attention.
 """
 
+import asyncio
 import logging
 import math
 import re
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+
+from app.config import settings
+
 logger = logging.getLogger(__name__)
+
+JINA_RERANK_URL = "https://api.jina.ai/v1/rerank"
 
 
 @dataclass
@@ -30,9 +37,19 @@ class RerankerService:
     """
     Reranker for scoring candidate document chunks against a user query.
 
-    Applies cross-attention contextual scoring combining term overlap,
-    lexical proximity, and phrase matching.
+    Applies neural cross-encoder reranking via Jina AI API, with automatic fallback
+    to local lexical cross-attention when offline or unconfigured.
     """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        timeout: float = 6.0,
+    ) -> None:
+        self.api_key = api_key or settings.jina_api_key
+        self.model = model or settings.jina_reranker_model or "jina-reranker-v2-base-multilingual"
+        self.timeout = timeout
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:
@@ -41,10 +58,9 @@ class RerankerService:
 
     def score_pair(self, query: str, document: str) -> float:
         """
-        Score a (query, document) pair.
+        Local cross-attention lexical scoring algorithm.
 
-        Returns:
-            Normalized relevance score between 0.0 and 1.0.
+        Used as an immediate sub-millisecond local scorer and fallback.
         """
         if not query or not document:
             return 0.0
@@ -75,36 +91,19 @@ class RerankerService:
         score = (recall * 0.5) + phrase_bonus + (normalized_tf * 0.2)
         return min(max(score, 0.0), 1.0)
 
-    def rerank(
+    def _local_rerank(
         self,
         query: str,
         candidates: list[dict[str, Any]],
         top_k: int = 5,
     ) -> list[RerankResult]:
-        """
-        Rerank a list of retrieved candidates and return the top_k.
-
-        Args:
-            query: The user's search query.
-            candidates: List of candidate dictionaries containing:
-                        'id', 'document_id', 'page_number', 'content', 'score'
-            top_k: Number of highest-relevance chunks to return.
-
-        Returns:
-            Top-k sorted list of RerankResult instances.
-        """
-        if not candidates:
-            return []
-
+        """Local heuristic reranking fallback combining lexical overlap and base RRF score."""
         scored: list[RerankResult] = []
         for rank, cand in enumerate(candidates):
             content = cand.get("content", "")
             base_score = float(cand.get("score", 0.0))
 
-            # Cross-encoder contextual scoring
             cross_score = self.score_pair(query, content)
-
-            # Combined score: 60% cross-encoder + 40% initial hybrid RRF score
             combined_score = (cross_score * 0.6) + (min(base_score, 1.0) * 0.4)
 
             scored.append(
@@ -118,14 +117,108 @@ class RerankerService:
                 )
             )
 
-        # Sort descending by relevance_score
         scored.sort(key=lambda r: r.relevance_score, reverse=True)
-
-        logger.info(
-            "Reranked %d candidates to top %d for query='%s'",
-            len(candidates),
-            min(top_k, len(scored)),
-            query[:50],
-        )
-
         return scored[:top_k]
+
+    async def rerank_async(
+        self,
+        query: str,
+        candidates: list[dict[str, Any]],
+        top_k: int = 5,
+        api_key_override: str | None = None,
+    ) -> list[RerankResult]:
+        """
+        Asynchronously rerank candidates using Jina AI Neural Cross-Encoder API.
+
+        Falls back to local heuristic if JINA_API_KEY is not configured or on network error.
+        """
+        if not candidates:
+            return []
+
+        active_key = api_key_override or self.api_key
+        if not active_key:
+            logger.debug("No Jina API key configured; using local lexical cross-encoder.")
+            return self._local_rerank(query, candidates, top_k)
+
+        doc_texts = [c.get("content", "") for c in candidates]
+        payload = {
+            "model": self.model,
+            "query": query,
+            "top_n": min(top_k, len(candidates)),
+            "documents": doc_texts,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {active_key}",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(JINA_RERANK_URL, json=payload, headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    results: list[RerankResult] = []
+                    for item in data.get("results", []):
+                        idx = item.get("index")
+                        if idx is not None and 0 <= idx < len(candidates):
+                            cand = candidates[idx]
+                            results.append(
+                                RerankResult(
+                                    chunk_id=str(cand.get("id", "")),
+                                    document_id=str(cand.get("document_id", "")),
+                                    page_number=int(cand.get("page_number", 1)),
+                                    content=cand.get("content", ""),
+                                    relevance_score=round(
+                                        float(item.get("relevance_score", 0.0)), 4
+                                    ),
+                                    original_rank=idx + 1,
+                                )
+                            )
+                    logger.info(
+                        "Jina AI Neural Reranker scored %d candidates to top %d for query='%s'",
+                        len(candidates),
+                        len(results),
+                        query[:50],
+                    )
+                    return results
+
+                logger.warning(
+                    "Jina AI rerank request returned HTTP %d: %s. Falling back to local scorer.",
+                    response.status_code,
+                    response.text[:200],
+                )
+        except Exception as e:
+            logger.warning("Jina AI reranker call failed (%s). Falling back to local scorer.", e)
+
+        return self._local_rerank(query, candidates, top_k)
+
+    def rerank(
+        self,
+        query: str,
+        candidates: list[dict[str, Any]],
+        top_k: int = 5,
+        api_key_override: str | None = None,
+    ) -> list[RerankResult]:
+        """
+        Synchronous reranker interface with fallback.
+
+        Used in synchronous testing or pipeline nodes.
+        """
+        if not candidates:
+            return []
+
+        active_key = api_key_override or self.api_key
+        if not active_key:
+            return self._local_rerank(query, candidates, top_k)
+
+        try:
+            # If in an event loop, run asynchronously
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Avoid nested event loop blocking; fall back to local or run in new thread
+                return self._local_rerank(query, candidates, top_k)
+            return loop.run_until_complete(
+                self.rerank_async(query, candidates, top_k, api_key_override)
+            )
+        except Exception:
+            return self._local_rerank(query, candidates, top_k)

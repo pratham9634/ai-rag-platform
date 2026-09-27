@@ -254,10 +254,11 @@ class RetrievalService:
         )
 
         # 4. Rerank top candidates for final precision
-        reranked = self.reranker_service.rerank(
+        reranked = await self.reranker_service.rerank_async(
             query=query,
             candidates=fused_candidates,
             top_k=top_k,
+            api_key_override=api_key_override,
         )
 
         logger.info(

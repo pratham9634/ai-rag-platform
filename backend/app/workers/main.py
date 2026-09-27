@@ -55,6 +55,28 @@ async def main() -> None:
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
 
+    import threading
+
+    def _start_celery() -> None:
+        try:
+            from app.workers.celery_app import celery_app
+
+            logger.info("Starting Celery consumer on queues: documents.ingestion, documents.dlq")
+            worker = celery_app.Worker(
+                queues=["documents.ingestion", "documents.dlq"],
+                loglevel=settings.log_level.upper(),
+                concurrency=2,
+                pool="solo",
+            )
+            worker.start()
+        except Exception as exc:
+            logger.warning(
+                "Celery worker could not connect to broker: %s. Continuing standalone.", exc
+            )
+
+    celery_thread = threading.Thread(target=_start_celery, daemon=True, name="celery_worker_thread")
+    celery_thread.start()
+
     # Start automated 7-day TTL cleanup daemon (runs every 1 hour)
     cleanup_task = asyncio.create_task(start_periodic_cleanup_loop(interval_seconds=3600))
 

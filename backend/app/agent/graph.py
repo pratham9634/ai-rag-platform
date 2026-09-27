@@ -26,6 +26,7 @@ from app.agent.prompts import (
 )
 from app.agent.state import AgentState
 from app.observability.tracer import get_tracer_run_config, metrics_tracker
+from app.services.intent import IntentDetector
 from app.services.llm import LLMService
 from app.services.retrieval import RetrievalService
 
@@ -42,10 +43,12 @@ class AgentWorkflow:
         db: AsyncSession,
         llm_service: LLMService | None = None,
         retrieval_service: RetrievalService | None = None,
+        intent_detector: IntentDetector | None = None,
     ) -> None:
         self.db = db
         self.llm = llm_service or LLMService()
         self.retrieval = retrieval_service or RetrievalService()
+        self.intent_detector = intent_detector or IntentDetector()
         self.graph = self._build_graph()
 
     def _build_graph(self) -> Any:
@@ -101,11 +104,19 @@ class AgentWorkflow:
         query = state.get("query", "")
         api_key = state.get("api_key_override")
 
-        # Fast heuristic checks for obvious greetings
-        clean = query.strip().lower()
-        if clean in {"hi", "hello", "hey", "who are you", "what can you do", "help"}:
-            return {"route": "direct"}
+        # 1. Sub-15ms fast-path intent classifier
+        detection = self.intent_detector.detect_intent_fast(query)
+        if detection.confidence >= self.intent_detector.confidence_threshold:
+            logger.info(
+                "Sub-15ms IntentDetector routed query to '%s' (conf=%.2f, method=%s, reason=%s)",
+                detection.route,
+                detection.confidence,
+                detection.method,
+                detection.reason,
+            )
+            return {"route": detection.route}
 
+        # 2. Ambiguous query fallback to LLM router
         messages = [
             {"role": "system", "content": ROUTER_PROMPT},
             {"role": "user", "content": f"User Query: {query}"},

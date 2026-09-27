@@ -105,6 +105,56 @@ class Settings(BaseSettings):
         description="OpenRouter API key for LLM and embeddings",
     )
 
+    # ---------- Jina AI (Neural Reranker) ----------
+    jina_api_key: str = Field(
+        default="",
+        description="Jina AI API key for multilingual cross-encoder reranking",
+    )
+    jina_reranker_model: str = Field(
+        default="jina-reranker-v2-base-multilingual",
+        description="Jina AI reranker model identifier",
+    )
+
+    # ---------- RabbitMQ & Celery ----------
+    rabbitmq_url: str = Field(
+        default="amqp://guest:guest@localhost:5672//",
+        description="RabbitMQ AMQP connection URL",
+    )
+    celery_broker_url: str = Field(
+        default="amqp://guest:guest@localhost:5672//",
+        description="Celery broker connection URL (RabbitMQ)",
+    )
+    celery_result_backend: str = Field(
+        default="redis://localhost:6379/1",
+        description="Celery result backend URL (Redis DB 1)",
+    )
+
+    # ---------- Storage (S3 / Supabase) ----------
+    storage_backend: str = Field(
+        default="supabase",
+        description="Storage provider ('supabase' or 's3')",
+    )
+    aws_access_key_id: str = Field(
+        default="",
+        description="AWS / S3-compatible Access Key ID",
+    )
+    aws_secret_access_key: str = Field(
+        default="",
+        description="AWS / S3-compatible Secret Access Key",
+    )
+    aws_region: str = Field(
+        default="us-east-1",
+        description="AWS S3 Region",
+    )
+    s3_bucket_name: str = Field(
+        default="documents",
+        description="S3 Bucket Name for document uploads",
+    )
+    s3_endpoint_url: str = Field(
+        default="",
+        description="Optional custom endpoint URL for Supabase/MinIO S3 compatibility",
+    )
+
     # ---------- LangSmith ----------
     langchain_tracing_v2: bool = Field(
         default=False,
