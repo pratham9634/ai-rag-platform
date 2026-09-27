@@ -95,3 +95,57 @@ Criteria:
 Return ONLY a valid JSON object:
 {{"grounded": "yes"}} or {{"grounded": "no"}}
 """
+
+MEMORY_EXTRACTION_PROMPT = """You are an intelligent long-term memory extraction system.
+Analyze the following recent conversation turn between User and Assistant.
+Determine whether any durable, long-term facts, preferences, project details, goals,
+constraints, or important decisions were revealed by the USER that should be remembered.
+
+RULES:
+1. Extract ONLY information stated or explicitly confirmed by the User.
+2. DO NOT extract temporary questions, ephemeral greetings, conversational banter, or
+   one-time troubleshooting steps.
+3. DO NOT extract assumptions, opinions, or statements made solely by the Assistant.
+4. Categories allowed:
+   - "preference": User likes, preferred formats, technologies, or working style
+     (e.g., "User prefers concise technical explanations and PostgreSQL").
+   - "project": Projects, systems, architectures, or domains the user is working on.
+   - "goal": High-level objectives or targets user wants to achieve.
+   - "constraint": Deadlines, compliance limits, hardware/software restrictions.
+   - "decision": Key architectural or technical choices confirmed by user.
+   - "fact": Permanent organization or user facts (e.g. role, team, environment).
+5. Importance must be a float between 0.1 (minor detail) and 1.0 (critical foundation).
+6. If no durable information is present, return an empty array: {{"memories": []}}.
+
+Dialogue:
+{dialogue}
+
+Return ONLY valid JSON matching this schema:
+{{
+  "memories": [
+    {{
+      "type": "preference|project|goal|constraint|decision|fact",
+      "content": "Clear, standalone declarative sentence",
+      "importance": 0.8
+    }}
+  ]
+}}
+"""
+
+CONVERSATION_SUMMARIZER_PROMPT = """You are an expert conversation summarizer for an AI assistant.
+Update the existing conversation summary by integrating the new conversation messages below.
+
+Existing Summary:
+{existing_summary}
+
+New Messages to integrate:
+{new_messages}
+
+Instructions:
+1. Synthesize a concise, factual summary (1-3 paragraphs) that captures the core questions,
+   topics discussed, key resolutions, and user intent.
+2. Exclude greetings, chit-chat, and transient back-and-forth remarks.
+3. Maintain chronological progression and retain specific entity names, project terms,
+   and technical conclusions.
+4. Do NOT include markdown code blocks or meta commentary; output ONLY the summary text.
+"""

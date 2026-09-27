@@ -9,6 +9,7 @@ Verifies:
 5. End-to-end workflow execution.
 """
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -131,13 +132,16 @@ async def test_end_to_end_agent_workflow(
     mock_db: AsyncMock, mock_llm: MagicMock, mock_retrieval: MagicMock
 ) -> None:
     """Full workflow completes and outputs generated answer with citations."""
-    mock_llm.generate_response = AsyncMock(
-        side_effect=[
-            '{"route": "retrieve"}',  # router
-            '{"score": "yes"}',  # grader
-            "Employees are entitled to 25 days of PTO [Page 1].",  # generator
-        ]
-    )
+    def dynamic_llm_response(*args: Any, **kwargs: Any) -> str:
+        messages = kwargs.get("messages", [])
+        system_content = messages[0].get("content", "") if messages else ""
+        if "relevance" in system_content.lower() or "grade" in system_content.lower():
+            return '{"score": "yes"}'
+        if "route" in system_content.lower():
+            return '{"route": "retrieve"}'
+        return "Employees are entitled to 25 days of PTO [Page 1]."
+
+    mock_llm.generate_response = AsyncMock(side_effect=dynamic_llm_response)
     workflow = AgentWorkflow(db=mock_db, llm_service=mock_llm, retrieval_service=mock_retrieval)
 
     final_state = await workflow.run(

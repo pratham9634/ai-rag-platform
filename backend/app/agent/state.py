@@ -10,8 +10,12 @@ from typing import Any, TypedDict
 class AgentState(TypedDict, total=False):
     """Execution state maintained across all agent graph nodes."""
 
-    # Tenant context
+    # Tenant & User context
     tenant_id: str
+    user_id: str
+
+    # Persistent memory context
+    memory_context: str
 
     # User input and transformed queries
     query: str

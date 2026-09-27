@@ -125,7 +125,7 @@ export default function AdminDashboard({
             <RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </button>
-          <span className="text-[11px] text-[var(--ink-tertiary)] font-mono">
+          <span suppressHydrationWarning className="text-[11px] text-[var(--ink-tertiary)] font-mono">
             Synced: {lastRefreshed.toLocaleTimeString()}
           </span>
         </div>

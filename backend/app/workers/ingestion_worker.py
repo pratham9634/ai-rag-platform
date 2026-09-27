@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 
 from app.database.models import Document, DocumentChunk
 from app.database.session import async_session_factory
-from app.services.chunker import SemanticChunker
+from app.services.chunker import ChunkerFactory
 from app.services.embeddings import EmbeddingService
 from app.services.parser import PDFParser
 
@@ -102,7 +102,9 @@ async def process_document_ingestion(
     # 2. Heavy CPU/NLP parsing & chunking (outside active DB transaction)
     try:
         parsed_doc = PDFParser.parse_bytes(file_bytes)
-        chunker = SemanticChunker(chunk_size=500, chunk_overlap=50)
+        chunker = ChunkerFactory.get_chunker(
+            filename=document.filename, chunk_size=500, chunk_overlap=50
+        )
         pages_input = [(p.page_number, p.text) for p in parsed_doc.pages]
         chunks = chunker.chunk_document(pages_input)
 

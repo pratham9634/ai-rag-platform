@@ -40,7 +40,21 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["redis.*", "uvicorn.*", "fitz.*", "fitz", "pgvector.*"]
+module = [
+    "redis.*",
+    "uvicorn.*",
+    "fitz.*",
+    "fitz",
+    "pgvector.*",
+    "celery.*",
+    "celery",
+    "kombu.*",
+    "kombu",
+    "boto3.*",
+    "boto3",
+    "botocore.*",
+    "botocore",
+]
 ignore_missing_imports = true
 
 # ── Pytest ───────────────────────────────────────────────────────────

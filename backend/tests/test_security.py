@@ -292,10 +292,24 @@ def test_rate_limiter_endpoint_burst_throttling(mock_db_session: AsyncMock) -> N
     app.dependency_overrides[get_db] = override_get_db
 
     fake_state = {"generation": "Answer", "citations": [], "route": "direct"}
+    fake_compiled = MagicMock(
+        formatted_context="",
+        citations=[],
+        recent_messages=[],
+    )
 
-    with patch("app.api.chat.AgentWorkflow") as mock_workflow_cls:
+    with (
+        patch("app.api.chat.AgentWorkflow") as mock_workflow_cls,
+        patch("app.api.chat.ContextManager") as mock_context_cls,
+        patch("app.api.chat.MemoryCacheService") as mock_cache_cls,
+        patch("app.api.chat._schedule_background_task"),
+    ):
         mock_instance = mock_workflow_cls.return_value
         mock_instance.run = AsyncMock(return_value=fake_state)
+        mock_ctx = mock_context_cls.return_value
+        mock_ctx.build_context = AsyncMock(return_value=fake_compiled)
+        mock_cache = mock_cache_cls.return_value
+        mock_cache.invalidate_recent_messages = AsyncMock()
 
         client = TestClient(app)
 

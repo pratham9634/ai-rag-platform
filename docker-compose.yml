@@ -56,13 +56,25 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - SUPABASE_STORAGE_BUCKET=documents
       - REDIS_URL=redis://redis:6379/0
-      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
-      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
-      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-enterprise-rag}
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - JINA_API_KEY=${JINA_API_KEY:-}
+      - JINA_RERANKER_MODEL=${JINA_RERANKER_MODEL:-jina-reranker-v2-base-multilingual}
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-supabase}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-${LANGSMITH_TRACING:-false}}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-${LANGSMITH_API_KEY:-}}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-${LANGSMITH_PROJECT:-ai-rag-platform-dev}}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-${LANGCHAIN_TRACING_V2:-false}}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-${LANGCHAIN_API_KEY:-}}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-${LANGCHAIN_PROJECT:-ai-rag-platform-dev}}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
     volumes:
       - ./backend:/app
+      - ./evaluation:/app/evaluation
     depends_on:
       - redis
+      - rabbitmq
 
   # ── Redis ───────────────────────────────────────
   redis:
@@ -78,9 +90,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── RabbitMQ Message Broker ──────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rag_rabbitmq
+    ports:
+      - "5672:5672"      # AMQP protocol
+      - "15672:15672"    # Web Management UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── Background Worker ───────────────────────────
-  # Same codebase as backend, different entrypoint.
-  # Processes async jobs (document ingestion, cleanup, etc.)
+  # Same codebase as backend, running Celery worker + cleanup daemon.
   worker:
     build:
       context: ./backend
@@ -94,12 +123,26 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - SUPABASE_STORAGE_BUCKET=documents
       - REDIS_URL=redis://redis:6379/0
-      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
-      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - JINA_API_KEY=${JINA_API_KEY:-}
+      - JINA_RERANKER_MODEL=${JINA_RERANKER_MODEL:-jina-reranker-v2-base-multilingual}
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-supabase}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-${LANGSMITH_TRACING:-false}}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-${LANGSMITH_API_KEY:-}}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-${LANGSMITH_PROJECT:-ai-rag-platform-dev}}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-${LANGCHAIN_TRACING_V2:-false}}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-${LANGCHAIN_API_KEY:-}}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-${LANGCHAIN_PROJECT:-ai-rag-platform-dev}}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
     volumes:
       - ./backend:/app
+      - ./evaluation:/app/evaluation
     depends_on:
       - redis
+      - rabbitmq
 
 volumes:
   redis_data:
+  rabbitmq_data:

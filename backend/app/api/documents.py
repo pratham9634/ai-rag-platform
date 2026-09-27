@@ -32,7 +32,9 @@ from app.auth.security import get_current_tenant_id, require_role
 from app.database.models import Document
 from app.database.session import get_db
 from app.services.parser import InvalidPDFError, PDFEncryptedError, PDFParser
+from app.services.storage import StorageService
 from app.workers.cleanup_service import cleanup_expired_documents
+from app.workers.ingestion_tasks import _execute_ingestion_pipeline, ingest_document_task
 from app.workers.ingestion_worker import process_document_ingestion
 
 logger = logging.getLogger(__name__)
@@ -113,6 +115,32 @@ class DocumentCleanupResponse(BaseModel):
     message: str
 
 
+class DocumentUploadUrlRequest(BaseModel):
+    """Request payload for pre-signed direct upload URL generation."""
+
+    filename: str
+    file_size: int
+    file_hash: str | None = None
+
+
+class DocumentUploadUrlResponse(BaseModel):
+    """Response returned with pre-signed direct storage upload URL."""
+
+    document_id: str
+    upload_url: str
+    storage_path: str
+    storage_backend: str
+    expires_in: int
+    method: str = "PUT"
+    message: str
+
+
+class DocumentConfirmUploadRequest(BaseModel):
+    """Request payload to confirm direct upload and trigger background ingestion."""
+
+    document_id: str
+
+
 # ── Endpoints ────────────────────────────────────────────────────────
 @router.get(
     "/usage",
@@ -150,6 +178,183 @@ async def get_tenant_usage(
         max_chunks=MAX_CHUNKS_PER_TENANT,
         retention_days=DEFAULT_TTL_DAYS,
         oldest_document_expires_at=oldest_expiry,
+    )
+
+
+@router.post(
+    "/upload-url",
+    response_model=DocumentUploadUrlResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Generate pre-signed direct storage upload URL (bypasses API RAM)",
+    dependencies=[Depends(RateLimiter(requests_per_minute=30, scope="upload_url"))],
+)
+async def generate_upload_url(
+    payload: DocumentUploadUrlRequest,
+    tenant_id: Annotated[str, Depends(get_current_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Any:
+    """
+    Generate pre-signed direct upload URL to Supabase Storage or AWS S3.
+
+    Enforces workspace document quota (max 10) and vault capacity (max 100MB).
+    Client directly uploads binary via HTTP PUT, preventing web server memory spikes.
+    """
+    if payload.file_size <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size must be greater than zero.",
+        )
+
+    if payload.file_size > MAX_FILE_SIZE:
+        max_mb = MAX_FILE_SIZE // (1024 * 1024)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File size exceeds maximum allowed limit of {max_mb}MB.",
+        )
+
+    # 1. Check tenant document quota (max 10)
+    count_stmt = select(func.count(Document.id)).where(
+        Document.tenant_id == tenant_id,
+        Document.status != "FAILED",
+    )
+    count_res = await db.execute(count_stmt)
+    raw_count = count_res.scalar()
+    current_doc_count = int(raw_count) if raw_count is not None else 0
+
+    if current_doc_count >= MAX_DOCUMENTS_PER_TENANT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Workspace document quota reached: Maximum {MAX_DOCUMENTS_PER_TENANT} "
+                "documents allowed. Please delete an older document to continue."
+            ),
+        )
+
+    # 2. Check vault storage quota (max 100 MB)
+    storage_stmt = select(func.coalesce(func.sum(Document.file_size), 0)).where(
+        Document.tenant_id == tenant_id,
+        Document.status != "FAILED",
+    )
+    storage_res = await db.execute(storage_stmt)
+    raw_storage = storage_res.scalar()
+    current_storage = int(raw_storage) if raw_storage is not None else 0
+
+    if current_storage + payload.file_size > MAX_VAULT_STORAGE_BYTES:
+        max_mb = MAX_VAULT_STORAGE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Vault storage quota exceeded: Maximum {max_mb}MB total allowed.",
+        )
+
+    # 3. Generate signed direct upload URL from StorageService
+    doc_id = uuid.uuid4()
+    storage = StorageService()
+    url_info = await storage.generate_upload_url(
+        tenant_id=tenant_id,
+        document_id=str(doc_id),
+        filename=payload.filename,
+        expires_in=900,
+    )
+
+    # 4. Create PENDING Document record with 7-day retention TTL
+    expires_at = datetime.now(UTC) + timedelta(days=DEFAULT_TTL_DAYS)
+    document = Document(
+        id=doc_id,
+        tenant_id=tenant_id,
+        filename=payload.filename,
+        file_size=payload.file_size,
+        file_hash=payload.file_hash,
+        storage_path=url_info["storage_path"],
+        status="PENDING",
+        expires_at=expires_at,
+    )
+    db.add(document)
+    await db.commit()
+
+    return DocumentUploadUrlResponse(
+        document_id=str(doc_id),
+        upload_url=url_info["upload_url"],
+        storage_path=url_info["storage_path"],
+        storage_backend=url_info["storage_backend"],
+        expires_in=url_info["expires_in"],
+        method=url_info.get("method", "PUT"),
+        message="Direct storage upload URL generated successfully.",
+    )
+
+
+@router.post(
+    "/confirm-upload",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Confirm direct upload completion and dispatch Celery ingestion",
+)
+async def confirm_upload(
+    payload: DocumentConfirmUploadRequest,
+    tenant_id: Annotated[str, Depends(get_current_tenant_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    background_tasks: BackgroundTasks,
+) -> Any:
+    """
+    Confirm direct upload completion and dispatch async Celery ingestion worker.
+
+    Enqueues job to RabbitMQ queue 'documents.ingestion' with Dead-Letter Queue (DLQ).
+    """
+    try:
+        doc_uuid = uuid.UUID(payload.document_id)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid document_id UUID format.",
+        ) from e
+
+    stmt = select(Document).where(Document.id == doc_uuid, Document.tenant_id == tenant_id)
+    res = await db.execute(stmt)
+    doc = res.scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    if doc.status == "READY":
+        return DocumentUploadResponse(
+            document_id=str(doc.id),
+            filename=doc.filename,
+            status="READY",
+            total_pages=doc.page_count,
+            total_chunks=0,
+            is_duplicate=True,
+            message="Document is already processed and ready.",
+        )
+
+    # Dispatch to Celery worker (RabbitMQ broker) with BackgroundTasks fallback
+    try:
+        ingest_document_task.delay(
+            document_id=str(doc.id),
+            tenant_id=tenant_id,
+            storage_path=doc.storage_path,
+            filename=doc.filename,
+        )
+        logger.info("Enqueued Celery ingestion task for doc_id=%s to RabbitMQ", doc.id)
+    except Exception as exc:
+        logger.warning("Celery enqueue failed (%s); running via in-process fallback", exc)
+        background_tasks.add_task(
+            _execute_ingestion_pipeline,
+            doc_id=doc.id,
+            tenant_id=tenant_id,
+            storage_path=doc.storage_path,
+            filename=doc.filename,
+        )
+
+    return DocumentUploadResponse(
+        document_id=str(doc.id),
+        filename=doc.filename,
+        status="PENDING",
+        total_pages=None,
+        total_chunks=None,
+        is_duplicate=False,
+        message="Upload confirmed. Dispatched to background ingestion queue.",
     )
 
 
@@ -310,13 +515,34 @@ async def upload_document(
     db.add(document)
     await db.commit()
 
-    # 6. Dispatch asynchronous background worker
-    background_tasks.add_task(
-        process_document_ingestion,
-        document_id=doc_id,
-        tenant_id=tenant_id,
-        file_bytes=content,
-    )
+    # 6. Persist file bytes to object storage for Celery worker consumption
+    storage_service = StorageService()
+    try:
+        await storage_service.upload_file_bytes(
+            storage_path=storage_path,
+            content=content,
+            content_type=file.content_type or "application/pdf",
+        )
+    except Exception as exc:
+        logger.warning("Object storage upload failed (%s); proceeding with worker dispatch", exc)
+
+    # 7. Dispatch asynchronous background worker (Celery broker with in-process fallback)
+    try:
+        ingest_document_task.delay(
+            document_id=str(doc_id),
+            tenant_id=tenant_id,
+            storage_path=storage_path,
+            filename=filename,
+        )
+        logger.info("Enqueued Celery ingestion task for direct upload doc_id=%s", doc_id)
+    except Exception as exc:
+        logger.info("Celery broker unavailable; running via in-process BackgroundTasks: %s", exc)
+        background_tasks.add_task(
+            process_document_ingestion,
+            document_id=doc_id,
+            tenant_id=tenant_id,
+            file_bytes=content,
+        )
 
     logger.info(
         "Accepted document for async ingestion: id=%s, tenant=%s, file_hash=%s",
@@ -516,6 +742,11 @@ async def delete_document(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found.",
         )
+
+    # Remove binary from object storage
+    if doc.storage_path:
+        storage = StorageService()
+        await storage.delete_file(doc.storage_path)
 
     await db.delete(doc)
     await db.flush()

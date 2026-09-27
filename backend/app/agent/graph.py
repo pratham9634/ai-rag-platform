@@ -26,6 +26,7 @@ from app.agent.prompts import (
 )
 from app.agent.state import AgentState
 from app.observability.tracer import get_tracer_run_config, metrics_tracker
+from app.services.intent import IntentDetector
 from app.services.llm import LLMService
 from app.services.retrieval import RetrievalService
 
@@ -42,10 +43,12 @@ class AgentWorkflow:
         db: AsyncSession,
         llm_service: LLMService | None = None,
         retrieval_service: RetrievalService | None = None,
+        intent_detector: IntentDetector | None = None,
     ) -> None:
         self.db = db
         self.llm = llm_service or LLMService()
         self.retrieval = retrieval_service or RetrievalService()
+        self.intent_detector = intent_detector or IntentDetector()
         self.graph = self._build_graph()
 
     def _build_graph(self) -> Any:
@@ -101,11 +104,19 @@ class AgentWorkflow:
         query = state.get("query", "")
         api_key = state.get("api_key_override")
 
-        # Fast heuristic checks for obvious greetings
-        clean = query.strip().lower()
-        if clean in {"hi", "hello", "hey", "who are you", "what can you do", "help"}:
-            return {"route": "direct"}
+        # 1. Sub-15ms fast-path intent classifier
+        detection = self.intent_detector.detect_intent_fast(query)
+        if detection.confidence >= self.intent_detector.confidence_threshold:
+            logger.info(
+                "Sub-15ms IntentDetector routed query to '%s' (conf=%.2f, method=%s, reason=%s)",
+                detection.route,
+                detection.confidence,
+                detection.method,
+                detection.reason,
+            )
+            return {"route": detection.route}
 
+        # 2. Ambiguous query fallback to LLM router
         messages = [
             {"role": "system", "content": ROUTER_PROMPT},
             {"role": "user", "content": f"User Query: {query}"},
@@ -268,7 +279,9 @@ class AgentWorkflow:
             context_blocks.append(f"{chunk_header}\n{clean_content}\n</chunk>")
         formatted_context = "\n\n".join(context_blocks)
 
-        system_msg = GENERATOR_SYSTEM_PROMPT.format(context=formatted_context)
+        memory_ctx = state.get("memory_context", "")
+        memory_section = f"\n\n{memory_ctx}\n" if memory_ctx else ""
+        system_msg = GENERATOR_SYSTEM_PROMPT.format(context=formatted_context) + memory_section
         messages: list[dict[str, str]] = [{"role": "system", "content": system_msg}]
 
         # Inject recent multi-turn conversation memory (last 6 messages = ~3 full turns)
@@ -296,6 +309,13 @@ class AgentWorkflow:
         query = state.get("query", "")
         api_key = state.get("api_key_override")
         chat_history = state.get("chat_history", [])
+        memory_ctx = state.get("memory_context", "")
+
+        memory_ref = (
+            f"\n\nPersistent User Memory Context (Reference Only):\n{memory_ctx}\n"
+            if memory_ctx
+            else ""
+        )
 
         messages: list[dict[str, str]] = [
             {
@@ -303,6 +323,7 @@ class AgentWorkflow:
                 "content": (
                     "You are the Enterprise RAG Assistant. Respond politely and concisely. "
                     "Offer to answer questions regarding corporate documentation and data."
+                    f"{memory_ref}"
                 ),
             }
         ]
@@ -330,14 +351,17 @@ class AgentWorkflow:
         self,
         tenant_id: str,
         query: str,
+        user_id: str = "unknown_user",
         api_key_override: str | None = None,
         model_override: str | None = None,
         top_k: int | None = None,
         chat_history: list[dict[str, str]] | None = None,
+        memory_context: str | None = None,
     ) -> AgentState:
         """Execute full agent graph and return final state."""
         initial_state: AgentState = {
             "tenant_id": tenant_id,
+            "user_id": user_id,
             "query": query,
             "rewritten_query": "",
             "documents": [],
@@ -349,6 +373,7 @@ class AgentWorkflow:
             "generation": "",
             "error": None,
             "chat_history": chat_history or [],
+            "memory_context": memory_context or "",
             "api_key_override": api_key_override,
             "model_override": model_override,
             "top_k": top_k,

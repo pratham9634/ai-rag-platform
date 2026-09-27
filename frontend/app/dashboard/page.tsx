@@ -1,4 +1,4 @@
-import { currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import DashboardClient from "@/components/DashboardClient";
 
@@ -9,9 +9,15 @@ import DashboardClient from "@/components/DashboardClient";
  * Orchestrates multi-tenant Agentic RAG chat, document ingestion, and citations.
  */
 export default async function DashboardPage() {
-  const user = await currentUser();
+  let userId: string | null = null;
+  try {
+    const session = await auth();
+    userId = session?.userId ?? null;
+  } catch {
+    userId = null;
+  }
 
-  if (!user) {
+  if (!userId) {
     redirect("/sign-in");
   }
 
